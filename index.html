@@ -693,5 +693,12 @@
     window.addKelas = function() { const i=document.getElementById('new-kelas-input'); const t=document.getElementById('new-kelas-tingkat').value; if(!i.value) return; (window.kelasList[t]=window.kelasList[t]||[]).push(i.value.toUpperCase()); i.value=''; renderSettings(); }
     window.rmKelas = function(t,c) { window.kelasList[t] = window.kelasList[t].filter(x=>x!==c); renderSettings(); }
   </script>
+  <script>
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('service-worker.js')
+      .then(() => console.log('Laju Akademik PWA Ready!'))
+      .catch((err) => console.log('Service Worker Gagal:', err));
+  }
+</script>
  </body>
 </html>
