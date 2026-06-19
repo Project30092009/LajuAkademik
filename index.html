@@ -634,6 +634,7 @@
     window.handleStudentLogin = function(e) { e.preventDefault(); const nis = document.getElementById('nis-input').value.trim(); const student = window.allData.find(d => d.type === 'student' && d.nis === nis); if (!student) return window.showToast('NIS belum terdaftar!', 'error'); if(!(window.kelasList[student.tingkat] || []).includes(student.jurusan_kelas)) return window.showToast('Kelas dinonaktifkan guru.', 'error'); window.currentStudent = student; window.showPage('page-student-dashboard'); window.renderStudentDashboard(); }
     
     window.logoutStudent = function() { 
+      window.stopAntiCheat();
         window.currentStudent = null; window.currentMapel = null; window.currentTaskType = null; window.currentSoalData = null; window.pasteDetected = false;
         document.getElementById('dashboard-lists-area').classList.remove('hidden'); document.getElementById('student-pengerjaan-area').classList.add('hidden');
         const containers = ['dynamic-essay-container', 'pg-student-list', 'campuran-pg-list', 'campuran-esai-list'];
@@ -668,6 +669,7 @@
     }
 
     window.selectTask = function(mapel, jenis) { 
+      window.startAntiCheat();
         window.currentMapel = mapel; window.currentTaskType = jenis; 
         document.getElementById('dashboard-lists-area').classList.add('hidden'); 
         document.getElementById('student-pengerjaan-area').classList.remove('hidden'); 
@@ -715,7 +717,7 @@
         });
     }
 
-    window.backToDashboard = function() { document.getElementById('dashboard-lists-area').classList.remove('hidden'); document.getElementById('student-pengerjaan-area').classList.add('hidden'); window.currentSoalData = null; }
+    window.backToDashboard = function() {window.stopAntiCheat(); document.getElementById('dashboard-lists-area').classList.remove('hidden'); document.getElementById('student-pengerjaan-area').classList.add('hidden'); window.currentSoalData = null; }
     window.downloadSoal = function() { if (window.currentSoalData && window.currentSoalData.soal_file) { const a = document.createElement('a'); a.href = window.currentSoalData.soal_file; a.download = window.currentSoalData.soal_file_name || `soal.pdf`; a.click(); } }
     window.selectMethod = function(method) { document.getElementById('answer-text-area').classList.toggle('hidden', method !== 'text'); document.getElementById('answer-upload-area').classList.toggle('hidden', method !== 'upload'); }
     window.addEssayInput = function() { const c = document.getElementById('dynamic-essay-container'); const n = c.children.length + 1; const div = document.createElement('div'); div.className = "flex items-start gap-3 fade-in"; div.innerHTML = `<span class="bg-indigo-500/20 text-indigo-300 font-800 px-3 py-2 rounded-lg mt-1">${n}.</span> <textarea class="inp-essay flex-1 px-4 py-3 bg-slate-900/50 border border-white/20 rounded-xl text-white placeholder-slate-500 focus:border-indigo-400 outline-none resize-y text-sm" rows="2" placeholder="Ketik jawaban untuk nomor ${n}..."></textarea>`; c.appendChild(div); }
@@ -1348,8 +1350,69 @@
     window.saveGuruSetup = async function() { const checkedMapel = Array.from(document.querySelectorAll('.cb-mapel:checked')).map(cb => cb.value); const checkedKelas = Array.from(document.querySelectorAll('.cb-kelas:checked')).map(cb => cb.value); if(checkedMapel.length === 0 || checkedKelas.length === 0) return window.showToast('Pilih Mapel & Kelas!', 'error'); const btn = document.getElementById('btn-save-setup'); btn.disabled = true; try { await update(ref(db, 'data_sekolah/' + window.currentUserDocId), { is_setup: true, guru_mapel: JSON.stringify(checkedMapel), guru_kelas: JSON.stringify(checkedKelas) }); window.guruMapel = checkedMapel; window.guruKelas = checkedKelas; window.showPage('page-teacher-dashboard'); window.renderTeacherView(); } catch(e) {} finally { btn.disabled = false; } }
 
     window.togglePasswordVisibility = function(id, ic) { const i = document.getElementById(id); const c = document.getElementById(ic); if (i.type === 'password') { i.type = 'text'; c.setAttribute('data-lucide', 'eye-off'); } else { i.type = 'password'; c.setAttribute('data-lucide', 'eye'); } lucide.createIcons(); }
-  </script>
-  
+    // --- SISTEM ANTI-CHEAT (PENCEGAH KECURANGAN) ---
+    window.cheatWarnings = 0;
+
+    window.startAntiCheat = function() {
+        // Deteksi jika siswa pindah tab / buka aplikasi lain (termasuk Snipping Tool)
+        window.addEventListener('blur', window.handleBlur);
+        // Deteksi dan blokir tombol keyboard
+        window.addEventListener('keydown', window.handleKeyDown);
+        // Blokir klik kanan dan copy
+        document.addEventListener('contextmenu', window.preventAction); 
+        document.addEventListener('copy', window.preventAction); 
+    };
+
+    window.stopAntiCheat = function() {
+        window.removeEventListener('blur', window.handleBlur);
+        window.removeEventListener('keydown', window.handleKeyDown);
+        document.removeEventListener('contextmenu', window.preventAction);
+        document.removeEventListener('copy', window.preventAction);
+    };
+
+    window.handleBlur = function() {
+        if (!window.currentSoalData) return; // Hanya berlaku saat sedang ngerjain soal
+        window.cheatWarnings++;
+        window.showToast(`Peringatan Kecurangan #${window.cheatWarnings}!`, 'error');
+        
+        // Memunculkan layar peringatan penuh
+        const overlay = document.createElement('div');
+        overlay.id = 'cheat-overlay';
+        overlay.className = 'fixed inset-0 bg-red-900/95 backdrop-blur-md z-[999999] flex flex-col items-center justify-center text-white p-8 text-center';
+        overlay.innerHTML = `
+            <i data-lucide="alert-triangle" class="w-32 h-32 text-yellow-400 mb-6 animate-pulse"></i>
+            <h1 class="text-4xl md:text-5xl font-900 mb-4 text-red-400 drop-shadow-lg">TERDETEKSI KELUAR HALAMAN!</h1>
+            <p class="text-lg md:text-xl text-slate-200 mb-8 max-w-xl leading-relaxed">
+                Aktivitas mencurigakan (Pindah Tab / Membuka Aplikasi Lain / Screenshot) telah direkam oleh sistem. 
+                <br><br><b>Peringatan ke-${window.cheatWarnings}</b>
+            </p>
+            <button onclick="this.parentElement.remove()" class="px-8 py-4 bg-white text-red-900 font-900 rounded-xl shadow-2xl hover:scale-105 transition-transform uppercase tracking-widest">
+                Saya Mengerti & Kembali Ujian
+            </button>
+        `;
+        document.body.appendChild(overlay);
+        lucide.createIcons();
+    };
+
+    window.handleKeyDown = function(e) {
+        // Blokir PrintScreen (PrtScn)
+        if (e.key === 'PrintScreen' || e.code === 'PrintScreen') {
+            e.preventDefault();
+            navigator.clipboard.writeText(''); // Kosongkan hasil copas
+            window.showToast('Tangkapan layar diblokir sistem!', 'error');
+        }
+        // Blokir kombinasi Ctrl + C / Ctrl + P / Ctrl + S
+        if (e.ctrlKey && (e.key === 'c' || e.key === 'p' || e.key === 's')) {
+            e.preventDefault();
+            window.showToast('Kombinasi tombol dilarang!', 'error');
+        }
+    };
+
+    window.preventAction = function(e) {
+        e.preventDefault();
+        window.showToast('Aksi dilarang di halaman ujian!', 'error');
+    };
+    </script>
   <script>
     if ('serviceWorker' in navigator) { navigator.serviceWorker.register('service-worker.js').then(() => console.log('PWA Ready!')).catch((err) => console.log(err)); }
     setTimeout(() => { const splash = document.getElementById('app-splash-screen'); if (splash) { splash.classList.add('opacity-0'); setTimeout(() => splash.remove(), 500); } }, 2000);
