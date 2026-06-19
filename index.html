@@ -1132,15 +1132,48 @@
     setTimeout(() => { const inpTingkat = document.getElementById('input-tingkat'); if(inpTingkat) inpTingkat.addEventListener('change', e => window.popJurusan(e.target.value)); }, 500);
     
     window.saveStudent = async function(e) { 
-        e.preventDefault(); const btn = document.getElementById('btn-save-student'); const oldTxt = btn.innerHTML; btn.disabled = true; btn.innerHTML = 'Menyimpan...'; 
-        const dt = { type: 'student', nis: document.getElementById('input-nis').value.trim(), nama: document.getElementById('input-nama').value.trim(), tingkat: document.getElementById('input-tingkat').value, jurusan_kelas: document.getElementById('input-jurusan').value, data_nilai: '{}', created_at: new Date().toISOString() }; 
+        e.preventDefault(); 
+        const btn = document.getElementById('btn-save-student'); 
+        const oldTxt = btn.innerHTML; 
+        btn.disabled = true; 
+        btn.innerHTML = 'Menyimpan...'; 
+        
+        const dt = { 
+            type: 'student', 
+            nis: document.getElementById('input-nis').value.trim(), 
+            nama: document.getElementById('input-nama').value.trim(), 
+            tingkat: document.getElementById('input-tingkat').value, 
+            jurusan_kelas: document.getElementById('input-jurusan').value, 
+            data_nilai: '{}', 
+            created_at: new Date().toISOString() 
+        }; 
+        
         try { 
-            if(window.editingStudentId) { await update(ref(db, 'data_sekolah/' + window.editingStudentId), dt); } 
-            else { await set(push(ref(db, 'data_sekolah')), dt); } 
-            window.closePopup('modal-student'); window.showToast('Data Siswa Sinkron!'); 
-        } catch (err) { window.showToast('Gagal', 'error'); } finally { btn.disabled = false; btn.innerHTML = oldTxt; } 
+            if(window.editingStudentId) { 
+                await update(ref(db, 'data_sekolah/' + window.editingStudentId), dt); 
+            } else { 
+                await set(push(ref(db, 'data_sekolah')), dt); 
+            } 
+            window.closePopup('modal-student'); 
+            window.showToast('Data Siswa Sinkron!'); 
+
+            // --- PERBAIKAN BUG: Reset Filter ---
+            // Kembalikan semua filter ke awal agar siswa yang baru ditambah/diedit PASTI langsung terlihat
+            document.getElementById('filter-tingkat').value = 'all';
+            document.getElementById('search-siswa').value = '';
+            window.currentStatusFilter = 'all';
+            
+            // Render ulang tampilan dengan filter yang sudah di-reset
+            window.renderTeacherView(); 
+            // -----------------------------------
+
+        } catch (err) { 
+            window.showToast('Gagal', 'error'); 
+        } finally { 
+            btn.disabled = false; 
+            btn.innerHTML = oldTxt; 
+        } 
     }
-    
     window.confirmDelete = function(e, docId) { e.currentTarget.parentElement.innerHTML = `<button onclick="window.doDelete('${docId}')" class="px-2 py-1 bg-red-600 rounded text-xs text-white font-bold">Yakin</button><button onclick="window.refreshDataLocal()" class="px-2 py-1 bg-slate-600 rounded text-xs text-white ml-2">Batal</button>`; }
     window.doDelete = async function(docId) { try { await remove(ref(db, 'data_sekolah/' + docId)); window.showToast('Terhapus!'); window.refreshDataLocal(); } catch(e) {} }
 
