@@ -570,9 +570,12 @@
             if (time <= 0) {
                 clearInterval(window.examTimerInterval);
                 window.showToast('Waktu Habis! Jawaban dikirim otomatis.', 'error');
+                // Flag ini dipakai submit functions untuk bypass validasi "jawaban kosong"
+                window.isAutoSubmit = true;
                 if(!document.getElementById('area-soal-pg').classList.contains('hidden')) window.submitPGAnswer();
                 else if(!document.getElementById('area-soal-campuran').classList.contains('hidden')) window.submitCampuranAnswer();
                 else window.submitTextAnswer();
+                window.isAutoSubmit = false;
             }
         }, 1000);
     }
@@ -712,27 +715,30 @@
         window.showPage('page-landing');
 
         // DETEKSI OTOMATIS JIKA GURU KEMBALI DARI HALAMAN WALI KELAS
+        // Fix: pakai onValue langsung ke node user, bukan setTimeout yang rapuh
         if(sessionStorage.getItem('is_logged_in_guru') === 'true') {
             onAuthStateChanged(auth, (user) => {
                 if(user) {
-                    setTimeout(() => {
-                        const userAccount = window.allUsers.find(d => d.uid === user.uid);
-                        if(userAccount) {
-                            window.currentUserRole = userAccount.role; 
-                            window.currentUserName = userAccount.nama; 
-                            window.currentUserDocId = userAccount.id_firestore;
-                            window.guruMapel = window.safeParse(userAccount.guru_mapel); 
-                            window.guruKelas = window.safeParse(userAccount.guru_kelas);
-                            window.isWaliKelas = userAccount.is_wali_kelas || false; 
-                            window.kelasWali = userAccount.kelas_wali || "";
-                            
-                            const btnWali = document.getElementById('btn-tab-wali');
-                            if(btnWali && window.isWaliKelas) btnWali.classList.remove('hidden');
-                            
-                            window.showPage('page-teacher-dashboard'); 
-                            window.showTeacherTab('students');
+                    onValue(ref(db, 'users/' + user.uid), (snap) => {
+                        if(snap.exists()) {
+                            const userAccount = { id_firestore: user.uid, ...snap.val() };
+                            if(userAccount.role === 'guru') {
+                                window.currentUserRole = userAccount.role; 
+                                window.currentUserName = userAccount.nama; 
+                                window.currentUserDocId = userAccount.id_firestore;
+                                window.guruMapel = window.safeParse(userAccount.guru_mapel); 
+                                window.guruKelas = window.safeParse(userAccount.guru_kelas);
+                                window.isWaliKelas = userAccount.is_wali_kelas || false; 
+                                window.kelasWali = userAccount.kelas_wali || "";
+                                
+                                const btnWali = document.getElementById('btn-tab-wali');
+                                if(btnWali) btnWali.classList.toggle('hidden', !window.isWaliKelas);
+                                
+                                window.showPage('page-teacher-dashboard'); 
+                                window.showTeacherTab('students');
+                            }
                         }
-                    }, 1000); // Jeda 1 detik biar Firebase selesai load
+                    }, { onlyOnce: true });
                 }
             });
         }
@@ -956,13 +962,14 @@
             inputs.forEach((inp, idx) => { if(inp.value.trim()) essayArr.push({ no: idx+1, question: `Nomor ${idx+1}`, text: inp.value.trim() }); });
         }
 
-        if (essayArr.length === 0 || essayArr.every(e => !e.text)) return window.showToast('Isi minimal 1 jawaban!', 'error'); 
+        // Saat auto-submit (timer habis), bypass validasi jawaban kosong
+        if (!window.isAutoSubmit && (essayArr.length === 0 || essayArr.every(e => !e.text))) return window.showToast('Isi minimal 1 jawaban!', 'error'); 
         
-        const btn = document.getElementById('btn-submit-text'); const oldTxt = btn.innerHTML; btn.disabled = true; btn.innerHTML = "Mengirim..."; 
+        const btn = document.getElementById('btn-submit-text'); const oldTxt = btn ? btn.innerHTML : ''; if(btn) { btn.disabled = true; btn.innerHTML = "Mengirim..."; } 
         try { 
             await set(push(ref(db, 'jawabans')), { tahun_ajaran: window.tahunAjaranAktif, jawaban_nis: window.currentStudent.nis, student_id_firestore: window.currentStudent.id_firestore, jawaban_mapel: window.currentMapel.key, jenis_tugas: window.currentTaskType, kategori_remedial: window.currentSoalData?.kategori_remedial || null, format_soal_jawaban: window.currentSoalData.format_soal || 'file', jawaban_essay: JSON.stringify(essayArr), created_at: new Date().toISOString() }); 
             window.backToDashboard(); window.showToast(`Jawaban berhasil dikirim!`); 
-        } catch(e) { window.showToast('Gagal mengirim jawaban!', 'error'); } finally { btn.disabled = false; btn.innerHTML = oldTxt; } 
+        } catch(e) { window.showToast('Gagal mengirim jawaban!', 'error'); } finally { if(btn) { btn.disabled = false; btn.innerHTML = oldTxt; } } 
     }
     
     window.renderPGStudent = function(soal, containerId, radioNamePrefix = 'ans') { 
@@ -973,7 +980,9 @@
     }
     
     window.submitPGAnswer = async function() { 
-        if(!window.currentSoalData) return; 
+        if(!window.currentSoalData) return;
+        // Konfirmasi sebelum submit (dilewati saat auto-submit timer)
+        if(!window.isAutoSubmit && !confirm('Yakin ingin mengirim semua jawaban? Jawaban tidak bisa diubah setelah dikirim.')) return;
         const qs = window.safeParse(window.currentSoalData.pg_questions); let correctCount = 0; let detailText = `--- HASIL KOREKSI OTOMATIS (PG) ---\n\n`; 
         for(let i=0; i<qs.length; i++) { 
             const selected = document.querySelector(`input[name="ans-${i}"]:checked`); 
@@ -981,7 +990,7 @@
             if(isCorrect) correctCount++; detailText += `Nomor ${i+1}: Jawab [${ansVal}] -> ${isCorrect ? 'BENAR' : `SALAH (Kunci: ${qs[i].correct})`}\n`; 
         } 
         const finalScore = Math.round((correctCount / qs.length) * 100) || 0; detailText = `NILAI AKHIR: ${finalScore} / 100\n\n` + detailText; 
-        const btn = document.getElementById('btn-submit-pg'); const oldTxt = btn.innerHTML; btn.disabled = true; btn.innerHTML = "Mengirim..."; 
+        const btn = document.getElementById('btn-submit-pg'); const oldTxt = btn ? btn.innerHTML : ''; if(btn) { btn.disabled = true; btn.innerHTML = "Mengirim..."; } 
         try { 
             await set(push(ref(db, 'jawabans')), { tahun_ajaran: window.tahunAjaranAktif, format_soal_jawaban: 'pg', jawaban_nis: window.currentStudent.nis, student_id_firestore: window.currentStudent.id_firestore, jawaban_mapel: window.currentMapel.key, jenis_tugas: window.currentTaskType, kategori_remedial: window.currentSoalData?.kategori_remedial || null, jawaban_text: detailText, created_at: new Date().toISOString() }); 
             
@@ -996,7 +1005,7 @@
             }
 
             window.backToDashboard(); window.showToast(`Selesai! Nilaimu otomatis tersimpan.`, 'success'); 
-        } catch(e) { window.showToast('Gagal mengirim!', 'error'); } finally { btn.disabled = false; btn.innerHTML = oldTxt; } 
+        } catch(e) { window.showToast('Gagal mengirim!', 'error'); } finally { if(btn) { btn.disabled = false; btn.innerHTML = oldTxt; } } 
     }
 
     window.submitCampuranAnswer = async function() {
@@ -1019,14 +1028,14 @@
         let essayArr = [];
         qSpans.forEach((q, idx) => { essayArr.push({ no: idx+1, question: q.innerText, text: aInputs[idx].value.trim() }); });
 
-        if (essayArr.length > 0 && essayArr.every(e => !e.text)) return window.showToast('Isi minimal 1 jawaban esai!', 'error');
+        if (!window.isAutoSubmit && essayArr.length > 0 && essayArr.every(e => !e.text)) return window.showToast('Isi minimal 1 jawaban esai!', 'error');
 
-        const btn = document.getElementById('btn-submit-campuran'); const oldTxt = btn.innerHTML; btn.disabled = true; btn.innerHTML = "Mengirim...";
+        const btn = document.getElementById('btn-submit-campuran'); const oldTxt = btn ? btn.innerHTML : ''; if(btn) { btn.disabled = true; btn.innerHTML = "Mengirim..."; }
 
         try {
             await set(push(ref(db, 'jawabans')), { tahun_ajaran: window.tahunAjaranAktif, jawaban_nis: window.currentStudent.nis, student_id_firestore: window.currentStudent.id_firestore, jawaban_mapel: window.currentMapel.key, jenis_tugas: window.currentTaskType, kategori_remedial: window.currentSoalData?.kategori_remedial || null, format_soal_jawaban: 'pg_esai', jawaban_pg_score: pgScore, jawaban_pg_detail: pgDetailText, jawaban_essay: JSON.stringify(essayArr), created_at: new Date().toISOString() });
             window.backToDashboard(); window.showToast(`Jawaban berhasil dikirim!`);
-        } catch(e) { window.showToast('Gagal mengirim!', 'error'); } finally { btn.disabled = false; btn.innerHTML = oldTxt; }
+        } catch(e) { window.showToast('Gagal mengirim!', 'error'); } finally { if(btn) { btn.disabled = false; btn.innerHTML = oldTxt; } }
     }
 
     window.handleFileSelect = function(inp) { if (inp.files.length) { window.selectedAnswerFile = inp.files[0]; document.getElementById('file-name-display').innerHTML = `<i data-lucide="check" class="w-4 h-4 inline"></i> File Siap: ${window.selectedAnswerFile.name}`; document.getElementById('file-name-display').classList.remove('hidden'); lucide.createIcons(); } }
