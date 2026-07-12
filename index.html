@@ -629,12 +629,16 @@
     window.preventAction = function(e) { e.preventDefault(); window.showToast('Aksi dilarang di halaman ujian!', 'error'); };
 
     window.calculateAvg = function(pDataMapel) {
-        if(!pDataMapel) return 0;
+        if(!pDataMapel || typeof pDataMapel !== 'object') return 0;
         let sum = 0; let count = 0;
-        if(pDataMapel.ganjil_sts) { sum += parseFloat(pDataMapel.ganjil_sts); count++; }
-        if(pDataMapel.ganjil_sas) { sum += parseFloat(pDataMapel.ganjil_sas); count++; }
-        if(pDataMapel.genap_sts) { sum += parseFloat(pDataMapel.genap_sts); count++; }
-        if(pDataMapel.genap_sat) { sum += parseFloat(pDataMapel.genap_sat); count++; }
+        // FIX: gunakan nilai !== undefined && nilai !== null agar nilai 0 tetap terhitung
+        const keys = ['ganjil_sts', 'ganjil_sas', 'genap_sts', 'genap_sat'];
+        keys.forEach(k => {
+            if(pDataMapel[k] !== undefined && pDataMapel[k] !== null && pDataMapel[k] !== '') {
+                const v = parseFloat(pDataMapel[k]);
+                if(!isNaN(v)) { sum += v; count++; }
+            }
+        });
         return count > 0 ? Math.round((sum / count) * 100) / 100 : 0;
     }
 
@@ -664,7 +668,8 @@
             if(snap.exists()) { const d = snap.val(); Object.keys(d).forEach(k => window.allStudents.push({id_firestore: k, ...d[k]})); }
             if(window.currentStudent) {
                 const up = window.allStudents.find(s => s.nis === window.currentStudent.nis);
-                if(up) window.currentStudent = up;
+                // FIX: update seluruh object student termasuk data_nilai yang bisa berupa object Firebase native
+                if(up) window.currentStudent = { ...up };
                 if(!document.getElementById('page-student-dashboard').classList.contains('hidden')) window.renderStudentDashboard();
             }
             window.refreshDataLocal();
@@ -683,12 +688,19 @@
         });
     }
 
+    // FIX: guru_mapel/guru_kelas bisa array (Firebase native) atau JSON string (data lama)
+    window.parseArray = function(data) {
+        if(!data) return [];
+        if(Array.isArray(data)) return data;
+        try { const r = JSON.parse(data); return Array.isArray(r) ? r : []; } catch(e) { return []; }
+    };
+
     function checkGuruSetup() {
         if(window.currentUserRole === 'guru' && window.currentUserDocId) { 
             const acc = window.allUsers.find(d => d.id_firestore === window.currentUserDocId); 
             if(acc && acc.is_setup) { 
-                window.guruMapel = window.safeParse(acc.guru_mapel); 
-                window.guruKelas = window.safeParse(acc.guru_kelas); 
+                window.guruMapel = window.parseArray(acc.guru_mapel); 
+                window.guruKelas = window.parseArray(acc.guru_kelas); 
                 window.isWaliKelas = acc.is_wali_kelas || false;
                 window.kelasWali = acc.kelas_wali || "";
             } 
@@ -702,6 +714,19 @@
       if (window.currentTeacherTab === 'jawaban') window.renderJawaban(); 
       if (window.currentTeacherTab === 'settings') window.renderSettings();
     }
+    
+    // IMPROVEMENT: Show loading state di tabel siswa saat pertama kali load
+    window.showTableLoading = function() {
+        const tb = document.getElementById('students-table-body');
+        if(tb && tb.innerHTML === '') {
+            tb.innerHTML = `<tr><td colspan="8" class="py-10 text-center text-slate-400">
+                <div class="flex items-center justify-center gap-3">
+                    <div class="w-5 h-5 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin"></div>
+                    Memuat data siswa...
+                </div>
+            </td></tr>`;
+        }
+    };
 
     document.addEventListener('DOMContentLoaded', () => { 
         setTimeout(() => {
@@ -726,8 +751,8 @@
                                 window.currentUserRole = userAccount.role; 
                                 window.currentUserName = userAccount.nama; 
                                 window.currentUserDocId = userAccount.id_firestore;
-                                window.guruMapel = window.safeParse(userAccount.guru_mapel); 
-                                window.guruKelas = window.safeParse(userAccount.guru_kelas);
+                                window.guruMapel = window.parseArray(userAccount.guru_mapel); 
+                                window.guruKelas = window.parseArray(userAccount.guru_kelas);
                                 window.isWaliKelas = userAccount.is_wali_kelas || false; 
                                 window.kelasWali = userAccount.kelas_wali || "";
                                 
@@ -754,7 +779,12 @@
     window.showPage = function(pageId) { document.querySelectorAll('[id^="page-"]').forEach(p => p.classList.add('hidden')); document.getElementById(pageId).classList.remove('hidden'); lucide.createIcons(); }
     window.closePopup = function(id) { document.getElementById(id).classList.add('hidden'); }
     window.showToast = function(msg, type='success') { const c = document.getElementById('toast-container'); const t = document.createElement('div'); t.className = `toast px-5 py-3 rounded-xl text-sm font-600 flex items-center gap-2 shadow-xl border ${type==='error'?'bg-red-900 border-red-500':'bg-emerald-900 border-emerald-500'} text-white pointer-events-auto`; t.innerHTML = `<i data-lucide="${type==='error'?'alert-circle':'check-circle'}" class="w-5 h-5"></i> ${msg}`; c.appendChild(t); lucide.createIcons(); setTimeout(() => t.remove(), 4000); }
-    window.parseNilai = function(jsonStr) { try { return JSON.parse(jsonStr || '{}'); } catch(e) { return {}; } }
+    // FIX: parseNilai support baik Firebase object native maupun JSON string legacy
+    window.parseNilai = function(data) { 
+        if(!data) return {};
+        if(typeof data === 'object') return data; // sudah object Firebase native
+        try { return JSON.parse(data); } catch(e) { return {}; } 
+    }
 
     window.handleStudentLogin = function(e) { 
         e.preventDefault(); 
@@ -833,6 +863,7 @@
       if(!window.currentStudent) return;
       document.getElementById('student-name-display').textContent = window.currentStudent.nama; document.getElementById('student-info-display').textContent = `${window.currentStudent.nis} | Kelas ${window.currentStudent.tingkat} ${window.currentStudent.jurusan_kelas}`;
       const listUlangan = document.getElementById('student-ulangan-list'); listUlangan.innerHTML = ''; const listRemedial = document.getElementById('student-remedial-list'); listRemedial.innerHTML = '';
+      // FIX: gunakan parseNilai yang sudah support object native Firebase
       const parsed = window.parseNilai(window.currentStudent.data_nilai); let cRem = 0; let cUl = 0;
 
       window.mapelList.forEach(m => {
@@ -989,9 +1020,20 @@
         
         const btn = document.getElementById('btn-submit-text'); const oldTxt = btn ? btn.innerHTML : ''; if(btn) { btn.disabled = true; btn.innerHTML = "Mengirim..."; } 
         try { 
-            await set(push(ref(db, 'jawabans')), { tahun_ajaran: window.tahunAjaranAktif, jawaban_nis: window.currentStudent.nis, student_id_firestore: window.currentStudent.id_firestore, jawaban_mapel: window.currentMapel.key, jenis_tugas: window.currentTaskType, kategori_remedial: window.currentSoalData?.kategori_remedial || null, format_soal_jawaban: window.currentSoalData.format_soal || 'file', jawaban_essay: JSON.stringify(essayArr), created_at: new Date().toISOString() }); 
+            await set(push(ref(db, 'jawabans')), { 
+                tahun_ajaran: window.tahunAjaranAktif, 
+                jawaban_nis: window.currentStudent.nis, 
+                student_id_firestore: window.currentStudent.id_firestore, 
+                jawaban_mapel: window.currentMapel.key, 
+                jenis_tugas: window.currentTaskType, 
+                kategori_remedial: window.currentSoalData?.kategori_remedial || null, 
+                // FIX: guard null-safe agar tidak throw jika currentSoalData null
+                format_soal_jawaban: window.currentSoalData?.format_soal || 'file', 
+                jawaban_essay: JSON.stringify(essayArr), 
+                created_at: new Date().toISOString() 
+            }); 
             window.backToDashboard(); window.showToast(`Jawaban berhasil dikirim!`); 
-        } catch(e) { window.showToast('Gagal mengirim jawaban!', 'error'); } finally { if(btn) { btn.disabled = false; btn.innerHTML = oldTxt; } } 
+        } catch(e) { window.showToast('Gagal mengirim jawaban!', 'error'); console.error(e); } finally { if(btn) { btn.disabled = false; btn.innerHTML = oldTxt; } } 
     }
     
     window.renderPGStudent = function(soal, containerId, radioNamePrefix = 'ans') { 
@@ -1017,13 +1059,10 @@
             await set(push(ref(db, 'jawabans')), { tahun_ajaran: window.tahunAjaranAktif, format_soal_jawaban: 'pg', jawaban_nis: window.currentStudent.nis, student_id_firestore: window.currentStudent.id_firestore, jawaban_mapel: window.currentMapel.key, jenis_tugas: window.currentTaskType, kategori_remedial: window.currentSoalData?.kategori_remedial || null, jawaban_text: detailText, created_at: new Date().toISOString() }); 
             
             if (window.currentTaskType === 'remedial' && window.currentSoalData && window.currentSoalData.kategori_remedial) {
-                const stuUpdate = window.allStudents.find(d => d.id_firestore === window.currentStudent.id_firestore);
-                if(stuUpdate) {
-                    const p = window.parseNilai(stuUpdate.data_nilai);
-                    if (!p[window.currentMapel.key]) p[window.currentMapel.key] = {};
-                    p[window.currentMapel.key][window.currentSoalData.kategori_remedial] = finalScore;
-                    await update(ref(db, 'students/' + window.currentStudent.id_firestore), { data_nilai: JSON.stringify(p) });
-                }
+                // FIX: Simpan langsung ke sub-path Firebase, bukan JSON string
+                await update(ref(db, `students/${window.currentStudent.id_firestore}/data_nilai/${window.currentMapel.key}`), {
+                    [window.currentSoalData.kategori_remedial]: finalScore
+                });
             }
 
             window.backToDashboard(); window.showToast(`Selesai! Nilaimu otomatis tersimpan.`, 'success'); 
@@ -1104,8 +1143,8 @@
           if (userAccount && userAccount.role === 'guru') {
             window.currentUserRole = userAccount.role; window.currentUserName = userAccount.nama; window.currentUserDocId = userAccount.id_firestore;
             
-            window.guruMapel = window.safeParse(userAccount.guru_mapel); 
-            window.guruKelas = window.safeParse(userAccount.guru_kelas); 
+            window.guruMapel = window.parseArray(userAccount.guru_mapel); 
+            window.guruKelas = window.parseArray(userAccount.guru_kelas); 
             window.isWaliKelas = userAccount.is_wali_kelas || false;
             window.kelasWali = userAccount.kelas_wali || "";
 
@@ -1149,7 +1188,8 @@
     window.showTeacherTab = function(t) { 
       window.currentTeacherTab = t; 
       document.querySelectorAll('[id^="tab-"]').forEach(x => x.classList.add('hidden')); 
-      document.getElementById('tab-'+t).classList.remove('hidden'); 
+      document.getElementById('tab-'+t).classList.remove('hidden');
+      if(t === 'students') window.showTableLoading(); 
       const filterBar = document.getElementById('global-filter-bar');
       if (filterBar) { if (t === 'students' || t === 'jawaban') filterBar.classList.remove('hidden'); else filterBar.classList.add('hidden'); }
       window.renderTeacherView(); 
@@ -1191,6 +1231,7 @@
       
       if (window.currentStatusFilter !== 'all') { 
           sts = sts.filter(s => { 
+              // FIX: parseNilai sudah support object native maupun JSON string
               const p = window.parseNilai(s.data_nilai); 
               if(m !== 'all') {
                   const kkm = window.mapelList.find(x=>x.key===m) ? (window.mapelList.find(x=>x.key===m)['kkm_'+s.tingkat] || 75) : 75;
@@ -1211,6 +1252,7 @@
       if(!sts.length) { tb.innerHTML = ''; document.getElementById('no-students-msg').classList.remove('hidden'); return; }
       document.getElementById('no-students-msg').classList.add('hidden');
       tb.innerHTML = sts.map((s,i) => {
+        // FIX: parseNilai sekarang support baik object native maupun JSON string
         const p = window.parseNilai(s.data_nilai); let nilaiTxt = '-'; let st = '-'; let theKkm = '-';
         if(m !== 'all') { 
             const avg = window.calculateAvg(p[m]);
@@ -1243,24 +1285,30 @@
         if(sts.length === 0) return window.showToast('Tidak ada data siswa untuk diekspor!', 'error');
 
         const dataToExport = sts.map((s, i) => {
+            // FIX: parseNilai sudah handle baik object native maupun JSON string
             const p = window.parseNilai(s.data_nilai);
             let row = { 'No': i + 1, 'NIS': s.nis, 'Nama Lengkap': s.nama, 'Kelas': `${s.tingkat} ${s.jurusan_kelas}` };
+
+            const nilaiOf = (mKey, field) => {
+                const v = p[mKey]?.[field];
+                return (v !== undefined && v !== null && v !== '') ? v : '-';
+            };
 
             if(m !== 'all') {
                 const mData = window.mapelList.find(x => x.key === m);
                 row['Mata Pelajaran'] = mData ? mData.name : m;
-                row['Ganjil - STS'] = p[m]?.ganjil_sts || '-';
-                row['Ganjil - SAS'] = p[m]?.ganjil_sas || '-';
-                row['Genap - STS'] = p[m]?.genap_sts || '-';
-                row['Genap - SAT'] = p[m]?.genap_sat || '-';
+                row['Ganjil - STS'] = nilaiOf(m, 'ganjil_sts');
+                row['Ganjil - SAS'] = nilaiOf(m, 'ganjil_sas');
+                row['Genap - STS'] = nilaiOf(m, 'genap_sts');
+                row['Genap - SAT'] = nilaiOf(m, 'genap_sat');
                 row['Rata-rata'] = window.calculateAvg(p[m]);
             } else {
                 let mapelsToShow = window.mapelList.filter(mapel => window.guruMapel.includes(mapel.key));
                 mapelsToShow.forEach(mapel => { 
-                    row[`${mapel.name} G-STS`] = p[mapel.key]?.ganjil_sts || '-'; 
-                    row[`${mapel.name} G-SAS`] = p[mapel.key]?.ganjil_sas || '-'; 
-                    row[`${mapel.name} P-STS`] = p[mapel.key]?.genap_sts || '-'; 
-                    row[`${mapel.name} P-SAT`] = p[mapel.key]?.genap_sat || '-'; 
+                    row[`${mapel.name} G-STS`] = nilaiOf(mapel.key, 'ganjil_sts'); 
+                    row[`${mapel.name} G-SAS`] = nilaiOf(mapel.key, 'ganjil_sas'); 
+                    row[`${mapel.name} P-STS`] = nilaiOf(mapel.key, 'genap_sts'); 
+                    row[`${mapel.name} P-SAT`] = nilaiOf(mapel.key, 'genap_sat'); 
                     row[`${mapel.name} RATA2`] = window.calculateAvg(p[mapel.key]);
                 });
             }
@@ -1346,7 +1394,8 @@
                 const s = data.student; const p = window.parseNilai(s.data_nilai);
                 if(!p[data.mapel]) p[data.mapel] = {};
                 p[data.mapel][data.kategori] = data.nilai;
-                updates[`students/${s.id_firestore}/data_nilai`] = JSON.stringify(p);
+                // FIX: Simpan sebagai Firebase object native per mapel, bukan JSON string seluruh data_nilai
+                updates[`students/${s.id_firestore}/data_nilai/${data.mapel}`] = p[data.mapel];
             }
             await update(ref(db), updates);
             window.showToast(`${window.tempBulkUpdates.length} nilai e-Rapor diupdate!`, 'success'); window.closePopup('modal-bulk-import'); window.refreshDataLocal();
@@ -1362,7 +1411,8 @@
         
         mapelsToGrade.forEach(m => { 
             const kkm = m['kkm_' + s.tingkat] || m.kkm || 75; 
-            const mData = p[m.key] || {};
+            // FIX: mData bisa object Firebase native langsung, tidak perlu JSON parse lagi
+            const mData = (p[m.key] && typeof p[m.key] === 'object') ? p[m.key] : {};
             c.innerHTML += `
             <div class="bg-slate-900/50 border border-white/5 p-4 rounded-xl mb-4">
                 <div class="flex justify-between items-center mb-3 border-b border-white/10 pb-2">
@@ -1393,16 +1443,17 @@
                 const p_sat = document.getElementById(`nl-${m.key}-p_sat`)?.value;
                 
                 if(!p[m.key]) p[m.key] = {};
-                if(g_sts !== '') p[m.key].ganjil_sts = g_sts; else delete p[m.key].ganjil_sts;
-                if(g_sas !== '') p[m.key].ganjil_sas = g_sas; else delete p[m.key].ganjil_sas;
-                if(p_sts !== '') p[m.key].genap_sts = p_sts; else delete p[m.key].genap_sts;
-                if(p_sat !== '') p[m.key].genap_sat = p_sat; else delete p[m.key].genap_sat;
+                if(g_sts !== '') p[m.key].ganjil_sts = parseFloat(g_sts); else delete p[m.key].ganjil_sts;
+                if(g_sas !== '') p[m.key].ganjil_sas = parseFloat(g_sas); else delete p[m.key].ganjil_sas;
+                if(p_sts !== '') p[m.key].genap_sts = parseFloat(p_sts); else delete p[m.key].genap_sts;
+                if(p_sat !== '') p[m.key].genap_sat = parseFloat(p_sat); else delete p[m.key].genap_sat;
 
                 if(Object.keys(p[m.key]).length === 0) delete p[m.key];
             }); 
-            await update(ref(db, 'students/' + window.editingStudentId), { data_nilai: JSON.stringify(p) }); 
+            // FIX: Simpan sebagai Firebase object native, BUKAN JSON string
+            await update(ref(db, 'students/' + window.editingStudentId + '/data_nilai'), p); 
             window.closePopup('modal-nilai'); window.showToast('Nilai Rapor Disimpan!'); 
-        } catch(e) {} finally { btn.disabled = false; } 
+        } catch(e) { window.showToast('Gagal menyimpan nilai!', 'error'); console.error(e); } finally { btn.disabled = false; } 
     }
 
     window.toggleRemedialCategory = function() { document.getElementById('remedial-category-container').classList.toggle('hidden', document.getElementById('upload-jenis-soal').value !== 'remedial'); }
@@ -1578,8 +1629,10 @@
         try {
             await update(ref(db, 'jawabans/' + docId), { jawaban_text: detailText, jawaban_essay: null, format_soal_jawaban: null });
             if (jData.jenis_tugas === 'remedial' && jData.kategori_remedial && jData.student_id_firestore) {
-                const stu = window.allStudents.find(d => d.id_firestore === jData.student_id_firestore);
-                if(stu) { const p = window.parseNilai(stu.data_nilai); if (!p[jData.jawaban_mapel]) p[jData.jawaban_mapel] = {}; p[jData.jawaban_mapel][jData.kategori_remedial] = finalScore; await update(ref(db, 'students/' + stu.id_firestore), { data_nilai: JSON.stringify(p) }); }
+                // FIX: Simpan langsung ke sub-path Firebase native
+                await update(ref(db, `students/${jData.student_id_firestore}/data_nilai/${jData.jawaban_mapel}`), {
+                    [jData.kategori_remedial]: finalScore
+                });
             }
             window.showToast('Nilai koreksi Esai berhasil disimpan!', 'success');
         } catch(e) { window.showToast('Gagal menyimpan nilai koreksi!', 'error'); }
@@ -1595,8 +1648,10 @@
         try {
             await update(ref(db, 'jawabans/' + docId), { jawaban_text: detailText, jawaban_essay: null, format_soal_jawaban: null });
             if (jData.jenis_tugas === 'remedial' && jData.kategori_remedial && jData.student_id_firestore) {
-                const stu = window.allStudents.find(d => d.id_firestore === jData.student_id_firestore);
-                if(stu) { const p = window.parseNilai(stu.data_nilai); if (!p[jData.jawaban_mapel]) p[jData.jawaban_mapel] = {}; p[jData.jawaban_mapel][jData.kategori_remedial] = finalScore; await update(ref(db, 'students/' + stu.id_firestore), { data_nilai: JSON.stringify(p) }); }
+                // FIX: Simpan langsung ke sub-path Firebase native
+                await update(ref(db, `students/${jData.student_id_firestore}/data_nilai/${jData.jawaban_mapel}`), {
+                    [jData.kategori_remedial]: finalScore
+                });
             }
             window.showToast('Nilai Campuran berhasil disimpan!', 'success');
         } catch(e) { window.showToast('Gagal menyimpan nilai!', 'error'); }
