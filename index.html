@@ -820,6 +820,15 @@
         }
     }
 
+    window.sudahKumpul = function(mapelKey, jenis) {
+        return window.allJawabans.some(j =>
+            j.student_id_firestore === window.currentStudent.id_firestore &&
+            j.jawaban_mapel === mapelKey &&
+            j.jenis_tugas === jenis &&
+            j.tahun_ajaran === window.tahunAjaranAktif
+        );
+    }
+
     window.renderStudentDashboard = function() {
       if(!window.currentStudent) return;
       document.getElementById('student-name-display').textContent = window.currentStudent.nama; document.getElementById('student-info-display').textContent = `${window.currentStudent.nis} | Kelas ${window.currentStudent.tingkat} ${window.currentStudent.jurusan_kelas}`;
@@ -831,7 +840,8 @@
         const kkm = m['kkm_' + window.currentStudent.tingkat] || m.kkm || 75;
         if (avg > 0 && avg < kkm) {
           cRem++; const div = document.createElement('div'); div.className = 'card-glass rounded-2xl p-5 cursor-pointer hover:bg-white/10 hover:border-red-500/50 transition-all group border border-white/5'; div.onclick = () => window.selectTask(m, 'remedial');
-          div.innerHTML = `<div class="flex items-start gap-4"><div class="w-12 h-12 rounded-xl bg-red-500/10 flex justify-center items-center"><i data-lucide="book-open" class="text-red-400"></i></div><div><p class="font-800 text-lg group-hover:text-red-300 transition-colors">${m.name}</p><span class="text-xs font-600 text-red-400 bg-red-500/10 px-2 py-1 rounded inline-flex mt-1 items-center gap-1"><i data-lucide="alert-circle" class="w-3 h-3"></i> Remedial (Nilai: ${avg})</span></div></div>`; listRemedial.appendChild(div);
+          const sdhRem = window.sudahKumpul(m.key, 'remedial');
+          div.innerHTML = `<div class="flex items-start gap-4"><div class="w-12 h-12 rounded-xl bg-red-500/10 flex justify-center items-center"><i data-lucide="book-open" class="text-red-400"></i></div><div><p class="font-800 text-lg group-hover:text-red-300 transition-colors">${m.name}</p><div class="flex gap-2 flex-wrap mt-1"><span class="text-xs font-600 text-red-400 bg-red-500/10 px-2 py-1 rounded inline-flex items-center gap-1"><i data-lucide="alert-circle" class="w-3 h-3"></i> Remedial (Nilai: ${avg})</span>${sdhRem ? '<span class=\"text-xs font-600 text-emerald-400 bg-emerald-500/10 px-2 py-1 rounded inline-flex items-center gap-1\"><i data-lucide=\"check-circle\" class=\"w-3 h-3\"></i> Sudah Dikumpulkan</span>' : ''}</div></div></div>`; listRemedial.appendChild(div);
         }
       });
       if(cRem===0) listRemedial.innerHTML = '<p class="col-span-full p-6 text-center text-emerald-400 font-700 bg-white/5 rounded-2xl border border-white/10">🎉 Nilai Rata-Rata Aman!</p>';
@@ -840,15 +850,27 @@
       const mapelUlanganKeys = [...new Set(soalUlanganList.map(s => s.soal_mapel))];
       mapelUlanganKeys.forEach(mKey => {
         const m = window.mapelList.find(x => x.key === mKey) || {key: mKey, name: mKey}; cUl++; const div = document.createElement('div'); div.className = 'card-glass rounded-2xl p-5 cursor-pointer hover:bg-white/10 hover:border-blue-500/50 transition-all group border border-white/5'; div.onclick = () => window.selectTask(m, 'ulangan');
-        div.innerHTML = `<div class="flex items-start gap-4"><div class="w-12 h-12 rounded-xl bg-blue-500/10 flex justify-center items-center"><i data-lucide="file-signature" class="text-blue-400"></i></div><div><p class="font-800 text-lg group-hover:text-blue-300 transition-colors">${m.name}</p><span class="text-xs font-600 text-blue-400 bg-blue-500/10 px-2 py-1 rounded inline-flex mt-1 items-center gap-1">Tugas Aktif</span></div></div>`; listUlangan.appendChild(div);
+        const sdhUl = window.sudahKumpul(m.key, 'ulangan');
+        div.innerHTML = `<div class="flex items-start gap-4"><div class="w-12 h-12 rounded-xl bg-blue-500/10 flex justify-center items-center"><i data-lucide="file-signature" class="text-blue-400"></i></div><div><p class="font-800 text-lg group-hover:text-blue-300 transition-colors">${m.name}</p><div class="flex gap-2 flex-wrap mt-1"><span class="text-xs font-600 text-blue-400 bg-blue-500/10 px-2 py-1 rounded inline-flex items-center gap-1">Tugas Aktif</span>${sdhUl ? '<span class=\"text-xs font-600 text-emerald-400 bg-emerald-500/10 px-2 py-1 rounded inline-flex items-center gap-1\"><i data-lucide=\"check-circle\" class=\"w-3 h-3\"></i> Sudah Dikumpulkan</span>' : ''}</div></div></div>`; listUlangan.appendChild(div);
       });
       if(cUl===0) listUlangan.innerHTML = '<p class="col-span-full p-6 text-center text-slate-400 font-500 bg-white/5 rounded-2xl border border-white/10">Belum ada tugas/ulangan aktif.</p>';
       lucide.createIcons();
     }
 
-    window.selectTask = function(mapel, jenis) { 
-        window.startAntiCheat(); 
-        
+    window.selectTask = function(mapel, jenis) {
+        // Cek duplikat: apakah siswa sudah pernah kirim jawaban untuk soal ini?
+        const sudahSubmit = window.allJawabans.some(j =>
+            j.student_id_firestore === window.currentStudent.id_firestore &&
+            j.jawaban_mapel === mapel.key &&
+            j.jenis_tugas === jenis &&
+            j.tahun_ajaran === window.tahunAjaranAktif
+        );
+        if (sudahSubmit) {
+            if (!confirm('Kamu sudah pernah mengumpulkan jawaban untuk ' + mapel.name + '.\nKumpulkan ulang? (Jawaban lama tetap tersimpan)')) return;
+        }
+
+        window.startAntiCheat();
+
         document.documentElement.requestFullscreen().catch(e => console.log("Fullscreen ditolak browser"));
         document.addEventListener('fullscreenchange', window.handleFullscreenChange);
 
@@ -1038,7 +1060,34 @@
         } catch(e) { window.showToast('Gagal mengirim!', 'error'); } finally { if(btn) { btn.disabled = false; btn.innerHTML = oldTxt; } }
     }
 
-    window.handleFileSelect = function(inp) { if (inp.files.length) { window.selectedAnswerFile = inp.files[0]; document.getElementById('file-name-display').innerHTML = `<i data-lucide="check" class="w-4 h-4 inline"></i> File Siap: ${window.selectedAnswerFile.name}`; document.getElementById('file-name-display').classList.remove('hidden'); lucide.createIcons(); } }
+    window.handleFileSelect = function(inp) {
+        if (!inp.files.length) return;
+        const file = inp.files[0];
+        const maxSize = 2 * 1024 * 1024; // 2MB
+        const allowedTypes = ['image/jpeg', 'image/png', 'image/webp', 'image/heic', 'image/heif'];
+
+        if (!allowedTypes.includes(file.type) && !file.name.match(/\.(jpg|jpeg|png|webp|heic|heif)$/i)) {
+            window.showToast('Hanya file gambar yang diizinkan (JPG, PNG, WEBP)!', 'error');
+            inp.value = '';
+            return;
+        }
+
+        if (file.size > maxSize) {
+            const sizeMB = (file.size / (1024 * 1024)).toFixed(1);
+            window.showToast('Foto terlalu besar (' + sizeMB + 'MB). Maksimal 2MB!', 'error');
+            inp.value = '';
+            return;
+        }
+
+        window.selectedAnswerFile = file;
+        const sizeKB = file.size < 1024 * 1024
+            ? (file.size / 1024).toFixed(0) + ' KB'
+            : (file.size / (1024 * 1024)).toFixed(1) + ' MB';
+        document.getElementById('file-name-display').innerHTML =
+            '<i data-lucide="check" class="w-4 h-4 inline"></i> File Siap: ' + file.name + ' <span class="text-slate-400">(' + sizeKB + ')</span>';
+        document.getElementById('file-name-display').classList.remove('hidden');
+        lucide.createIcons();
+    }
     window.submitUploadAnswer = async function() { if (!window.selectedAnswerFile) return window.showToast('Pilih foto!', 'error'); const btn = document.getElementById('btn-submit-upload'); const oldTxt = btn.innerHTML; btn.disabled = true; btn.innerHTML = "Mengupload..."; const r = new FileReader(); r.onload = async (e) => { try { await set(push(ref(db, 'jawabans')), { tahun_ajaran: window.tahunAjaranAktif, format_soal_jawaban: 'file', jawaban_nis: window.currentStudent.nis, student_id_firestore: window.currentStudent.id_firestore, jawaban_mapel: window.currentMapel.key, jenis_tugas: window.currentTaskType, kategori_remedial: window.currentSoalData?.kategori_remedial || null, jawaban_file_name: window.selectedAnswerFile.name, jawaban_file_data: e.target.result, created_at: new Date().toISOString() }); window.selectedAnswerFile = null; document.getElementById('file-name-display').classList.add('hidden'); window.backToDashboard(); window.showToast(`Foto Terkirim!`); } catch(err) { window.showToast('Gagal upload!', 'error'); } finally { btn.disabled = false; btn.innerHTML = oldTxt; } }; r.readAsDataURL(window.selectedAnswerFile); }
 
     // --- ALUR GURU ---
