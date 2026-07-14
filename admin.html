@@ -319,6 +319,7 @@
     window.kelasList = {}; 
     window.tahunAjaranAktif = "Belum Disetup";
     window.editingStudentId = null;
+    window._gurusLoaded = false; // FIX: flag race condition
     
     // Variabel Penampung Data Massal
     window.tempBulkSiswa = [];
@@ -349,6 +350,8 @@
                     if(data[k].role === 'superadmin') hasSuperadmin = true;
                 });
             }
+            // FIX: tandai data sudah siap
+            window._gurusLoaded = true;
             const btnSetup = document.getElementById('btn-setup-awal');
             if(btnSetup) { if(!hasSuperadmin) btnSetup.classList.remove('hidden'); else btnSetup.classList.add('hidden'); }
             window.renderGuru();
@@ -380,16 +383,50 @@
         });
     });
 
-    window.handleAdminLogin = function(e) {
+    window.handleAdminLogin = async function(e) {
         e.preventDefault();
-        const em = document.getElementById('admin-email').value.trim(); const pass = document.getElementById('admin-pass').value;
-        const btn = document.getElementById('btn-login'); btn.disabled = true; btn.innerHTML = "Memeriksa...";
-        signInWithEmailAndPassword(auth, em, pass).then((cred) => {
-            const acc = window.allGurus.find(u => u.email === cred.user.email && u.role === 'superadmin');
+        const em = document.getElementById('admin-email').value.trim(); 
+        const pass = document.getElementById('admin-pass').value;
+        const btn = document.getElementById('btn-login'); 
+        btn.disabled = true; btn.innerHTML = "Memeriksa...";
+
+        try {
+            // FIX: tunggu data dari Firebase siap dulu (maks 5 detik)
+            if(!window._gurusLoaded) {
+                btn.innerHTML = "Memuat data...";
+                await new Promise((resolve, reject) => {
+                    let tries = 0;
+                    const interval = setInterval(() => {
+                        tries++;
+                        if(window._gurusLoaded) { clearInterval(interval); resolve(); }
+                        if(tries > 50) { clearInterval(interval); reject(new Error('timeout')); }
+                    }, 100);
+                });
+            }
+
+            const cred = await signInWithEmailAndPassword(auth, em, pass);
+            // FIX: cek uid ATAU email agar tidak miss match
+            const acc = window.allGurus.find(u => 
+                (u.uid === cred.user.uid || u.email === cred.user.email) && u.role === 'superadmin'
+            );
             if(acc) {
-                window.showPage('page-admin-dashboard'); document.getElementById('admin-name-display').innerText = acc.nama; e.target.reset(); window.showTab('tab-guru');
-            } else { signOut(auth); window.showToast('Bukan akun TU!', 'error'); }
-        }).catch(err => window.showToast('Akses ditolak!', 'error')).finally(() => { btn.disabled = false; btn.innerHTML = "Masuk Sistem"; });
+                window.showPage('page-admin-dashboard'); 
+                document.getElementById('admin-name-display').innerText = acc.nama; 
+                e.target.reset(); 
+                window.showTab('tab-guru');
+            } else { 
+                await signOut(auth); 
+                window.showToast('Bukan akun TU! Pastikan sudah setup akun master.', 'error'); 
+            }
+        } catch(err) { 
+            if(err.message === 'timeout') {
+                window.showToast('Koneksi lambat, coba lagi!', 'error');
+            } else {
+                window.showToast('Email / Password salah!', 'error');
+            }
+        } finally { 
+            btn.disabled = false; btn.innerHTML = "Masuk Sistem"; 
+        }
     }
 
     window.logoutAdmin = function() { signOut(auth).then(() => { window.showPage('page-admin-login'); }); }

@@ -534,6 +534,8 @@
     window.allSoals = [];
     window.allJawabans = [];
     window.tahunAjaranAktif = "Belum Disetup";
+    window._usersLoaded = false;   // FIX: flag race condition login guru
+    window._studentsLoaded = false; // FIX: flag race condition login siswa
 
     window.currentStudent = null; window.currentMapel = null; window.currentTaskType = null;
     window.currentStatusFilter = 'all'; window.currentTeacherTab = 'students'; window.editingStudentId = null; 
@@ -656,12 +658,14 @@
         onValue(ref(db, 'users'), snap => {
             window.allUsers = [];
             if(snap.exists()) { const d = snap.val(); Object.keys(d).forEach(k => window.allUsers.push({id_firestore: k, ...d[k]})); }
+            window._usersLoaded = true; // FIX: tandai data siap
             checkGuruSetup();
         });
         
         onValue(ref(db, 'students'), snap => {
             window.allStudents = [];
             if(snap.exists()) { const d = snap.val(); Object.keys(d).forEach(k => window.allStudents.push({id_firestore: k, ...d[k]})); }
+            window._studentsLoaded = true; // FIX: tandai data siap
             if(window.currentStudent) {
                 const up = window.allStudents.find(s => s.nis === window.currentStudent.nis);
                 if(up) window.currentStudent = up;
@@ -756,21 +760,45 @@
     window.showToast = function(msg, type='success') { const c = document.getElementById('toast-container'); const t = document.createElement('div'); t.className = `toast px-5 py-3 rounded-xl text-sm font-600 flex items-center gap-2 shadow-xl border ${type==='error'?'bg-red-900 border-red-500':'bg-emerald-900 border-emerald-500'} text-white pointer-events-auto`; t.innerHTML = `<i data-lucide="${type==='error'?'alert-circle':'check-circle'}" class="w-5 h-5"></i> ${msg}`; c.appendChild(t); lucide.createIcons(); setTimeout(() => t.remove(), 4000); }
     window.parseNilai = function(jsonStr) { try { return JSON.parse(jsonStr || '{}'); } catch(e) { return {}; } }
 
-    window.handleStudentLogin = function(e) { 
+    window.handleStudentLogin = async function(e) { 
         e.preventDefault(); 
         const nis = document.getElementById('nis-input').value.trim(); 
-        const pass = document.getElementById('nis-password').value; 
-        
-        const student = window.allStudents.find(d => d.nis === nis); 
-        if (!student) return window.showToast('NIS belum terdaftar!', 'error'); 
-        
-        const truePass = student.password || "123456";
-        if (pass !== truePass) return window.showToast('Kata sandi salah!', 'error');
+        const pass = document.getElementById('nis-password').value;
+        const btn = e.target.querySelector('button[type="submit"]');
+        if(btn) { btn.disabled = true; btn.textContent = 'Memeriksa...'; }
 
-        if(!(window.kelasList[student.tingkat] || []).includes(student.jurusan_kelas)) return window.showToast('Kelas dinonaktifkan.', 'error'); 
-        
-        window.currentStudent = student; 
-        window.showPage('page-student-dashboard'); window.renderStudentDashboard(); 
+        try {
+            // FIX: tunggu data siswa siap dari Firebase (maks 5 detik)
+            if(!window._studentsLoaded) {
+                if(btn) btn.textContent = 'Memuat data...';
+                await new Promise((resolve, reject) => {
+                    let tries = 0;
+                    const interval = setInterval(() => {
+                        tries++;
+                        if(window._studentsLoaded) { clearInterval(interval); resolve(); }
+                        if(tries > 50) { clearInterval(interval); reject(new Error('timeout')); }
+                    }, 100);
+                });
+            }
+
+            const student = window.allStudents.find(d => d.nis === nis); 
+            if (!student) return window.showToast('NIS belum terdaftar!', 'error'); 
+            
+            const truePass = student.password || "123456";
+            if (pass !== truePass) return window.showToast('Kata sandi salah!', 'error');
+
+            if(!(window.kelasList[student.tingkat] || []).includes(student.jurusan_kelas)) 
+                return window.showToast('Kelas dinonaktifkan.', 'error'); 
+            
+            window.currentStudent = student; 
+            window.showPage('page-student-dashboard'); 
+            window.renderStudentDashboard();
+        } catch(err) {
+            if(err.message === 'timeout') window.showToast('Koneksi lambat, coba lagi!', 'error');
+            else window.showToast('Terjadi kesalahan, coba lagi!', 'error');
+        } finally {
+            if(btn) { btn.disabled = false; btn.textContent = 'Masuk Dashboard'; }
+        }
     }
     
     window.logoutStudent = function() { 
@@ -1091,15 +1119,30 @@
     window.submitUploadAnswer = async function() { if (!window.selectedAnswerFile) return window.showToast('Pilih foto!', 'error'); const btn = document.getElementById('btn-submit-upload'); const oldTxt = btn.innerHTML; btn.disabled = true; btn.innerHTML = "Mengupload..."; const r = new FileReader(); r.onload = async (e) => { try { await set(push(ref(db, 'jawabans')), { tahun_ajaran: window.tahunAjaranAktif, format_soal_jawaban: 'file', jawaban_nis: window.currentStudent.nis, student_id_firestore: window.currentStudent.id_firestore, jawaban_mapel: window.currentMapel.key, jenis_tugas: window.currentTaskType, kategori_remedial: window.currentSoalData?.kategori_remedial || null, jawaban_file_name: window.selectedAnswerFile.name, jawaban_file_data: e.target.result, created_at: new Date().toISOString() }); window.selectedAnswerFile = null; document.getElementById('file-name-display').classList.add('hidden'); window.backToDashboard(); window.showToast(`Foto Terkirim!`); } catch(err) { window.showToast('Gagal upload!', 'error'); } finally { btn.disabled = false; btn.innerHTML = oldTxt; } }; r.readAsDataURL(window.selectedAnswerFile); }
 
     // --- ALUR GURU ---
-    window.handlePegawaiLogin = function(e) { 
+    window.handlePegawaiLogin = async function(e) { 
       e.preventDefault(); 
       const kode = document.getElementById('pegawai-kode').value.trim(); 
       const password = document.getElementById('pegawai-password').value;
       const pseudoEmail = `${kode}@alhuda.edu`; 
       
       const btn = document.getElementById('btn-login-pegawai'); const oldTxt = btn.innerHTML; btn.disabled = true; btn.innerHTML = "Memeriksa...";
-      signInWithEmailAndPassword(auth, pseudoEmail, password)
-        .then((userCredential) => {
+
+      try {
+        // FIX: tunggu data users siap dari Firebase (maks 5 detik)
+        if(!window._usersLoaded) {
+            btn.innerHTML = "Memuat data...";
+            await new Promise((resolve, reject) => {
+                let tries = 0;
+                const interval = setInterval(() => {
+                    tries++;
+                    if(window._usersLoaded) { clearInterval(interval); resolve(); }
+                    if(tries > 50) { clearInterval(interval); reject(new Error('timeout')); }
+                }, 100);
+            });
+        }
+
+        const userCredential = await signInWithEmailAndPassword(auth, pseudoEmail, password);
+        {
           const userAccount = window.allUsers.find(d => d.uid === userCredential.user.uid);
           if (userAccount && userAccount.role === 'guru') {
             window.currentUserRole = userAccount.role; window.currentUserName = userAccount.nama; window.currentUserDocId = userAccount.id_firestore;
@@ -1123,9 +1166,14 @@
             
             e.target.reset();
           } else { 
-              signOut(auth); window.showToast('Akses ditolak! Anda bukan guru.', 'error'); 
+              await signOut(auth); 
+              window.showToast('Akses ditolak! Kode guru tidak ditemukan.', 'error'); 
           }
-        }).catch((err) => window.showToast('Kode / Password salah!', 'error')).finally(() => { btn.disabled = false; btn.innerHTML = oldTxt; }); 
+        }
+      } catch(err) { 
+          if(err.message === 'timeout') window.showToast('Koneksi lambat, coba lagi!', 'error');
+          else window.showToast('Kode / Password salah!', 'error'); 
+      } finally { btn.disabled = false; btn.innerHTML = oldTxt; }
     }
 
     window.changeGuruPassword = async function(e) {
