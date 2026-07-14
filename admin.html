@@ -324,12 +324,7 @@
     window.tempBulkSiswa = [];
     window.tempBulkGuru = [];
 
-    // FIX: safeParse support array Firebase native maupun JSON string
-    window.safeParse = function(data) { 
-        if(!data) return [];
-        if(Array.isArray(data)) return data;
-        try { const r = JSON.parse(data); return Array.isArray(r) ? r : []; } catch(e) { return []; }
-    };
+    window.safeParse = function(str) { try { return JSON.parse(str || '[]'); } catch(e) { return []; } };
 
     window.showToast = function(msg, type='success') { 
         const c = document.getElementById('toast-container'); const t = document.createElement('div'); 
@@ -703,8 +698,7 @@
                     const newKey = push(ref(db, 'students')).key;
                     updates['students/' + newKey] = {
                         nis: s.nis, nama: s.nama, tingkat: s.tingkat, jurusan_kelas: s.jurusan_kelas,
-                        // FIX: simpan data_nilai sebagai object kosong {}, bukan string "{}"
-                        password: "123456", data_nilai: {}, created_at: new Date().toISOString()
+                        password: "123456", data_nilai: "{}", created_at: new Date().toISOString()
                     };
                     addedCount++;
                 }
@@ -773,8 +767,7 @@
             created_at: new Date().toISOString() 
         }; 
         
-        // FIX: inisialisasi data_nilai sebagai object {}, bukan string '{}'
-        if(!window.editingStudentId) dt.data_nilai = {}; 
+        if(!window.editingStudentId) dt.data_nilai = '{}'; 
         try { 
             if(window.editingStudentId) await update(ref(db, 'students/' + window.editingStudentId), dt); else {
                 const newRef = push(ref(db, 'students'));

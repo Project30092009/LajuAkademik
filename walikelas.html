@@ -119,12 +119,7 @@
     window._sekolahLoaded = false;
     window._studentsLoaded = false;
     
-    // FIX: safeParse support object Firebase native (tidak hanya JSON string)
-    window.safeParse = function(data) { 
-        if(!data) return {};
-        if(typeof data === 'object') return data;
-        try { return JSON.parse(data); } catch(e) { return {}; } 
-    };
+    window.safeParse = function(str) { try { return JSON.parse(str || '{}'); } catch(e) { return {}; } };
 
     window.showToast = function(msg, type='success') { 
         const c = document.getElementById('toast-container'); const t = document.createElement('div'); 
@@ -238,8 +233,11 @@
             }
 
             anakWali = anakWali.map(s => {
-                // FIX: support object Firebase native & JSON string legacy
-                let p = window.safeParse(s.data_nilai);
+                let p = {};
+                try { 
+                    p = JSON.parse(s.data_nilai || '{}'); 
+                    if (typeof p !== 'object') p = {};
+                } catch(e) { p = {}; }
 
                 let totalNilai = 0;
                 window.mapelList.forEach(m => { 
@@ -349,8 +347,8 @@
         if(anakWali.length === 0) return window.showToast("Data kelas masih kosong!", "error");
 
         anakWali = anakWali.map(s => {
-            // FIX: gunakan safeParse yang sudah support object Firebase native
-            let p = window.safeParse(s.data_nilai);
+            let p = {};
+            try { p = JSON.parse(s.data_nilai || '{}'); if (typeof p !== 'object') p = {}; } catch(e) { p = {}; }
             let totalNilai = 0;
             window.mapelList.forEach(m => { if(p[m.key]) totalNilai += window.calculateAvg(p[m.key]); });
             return { ...s, parsedNilai: p, totalNilai: totalNilai };
