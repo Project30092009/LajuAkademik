@@ -44,7 +44,7 @@
                 </div>
             </div>
             <button type="submit" id="btn-login" class="w-full py-3 mt-2 btn-admin rounded-xl font-700 transition-all">Masuk Sistem</button>
-            <button type="button" id="btn-setup-awal" onclick="window.showPage('page-setup-tu')" class="w-full py-3 mt-4 bg-red-600/80 hover:bg-red-500 text-white rounded-xl font-700 text-sm transition-all border border-red-400/50 shadow-lg shadow-red-500/20"><i data-lucide="alert-triangle" class="w-4 h-4 inline mr-2"></i>Setup Akun Master TU (Awal)</button>
+            <button type="button" id="btn-setup-awal" onclick="window.showPage('page-setup-tu')" class="hidden w-full py-3 mt-4 bg-red-600/80 hover:bg-red-500 text-white rounded-xl font-700 text-sm transition-all border border-red-400/50 shadow-lg shadow-red-500/20"><i data-lucide="alert-triangle" class="w-4 h-4 inline mr-2"></i>Setup Akun Master TU (Awal)</button>
         </form>
     </div>
   </div>
@@ -349,13 +349,8 @@
                     if(data[k].role === 'superadmin') hasSuperadmin = true;
                 });
             }
-            // FIX: tandai data sudah siap, sembunyikan tombol setup HANYA jika sudah ada superadmin
-            window._gurusLoaded = true;
             const btnSetup = document.getElementById('btn-setup-awal');
-            if(btnSetup) { 
-                if(hasSuperadmin) btnSetup.classList.add('hidden'); 
-                else btnSetup.classList.remove('hidden'); 
-            }
+            if(btnSetup) { if(!hasSuperadmin) btnSetup.classList.remove('hidden'); else btnSetup.classList.add('hidden'); }
             window.renderGuru();
         });
 
@@ -457,10 +452,7 @@
                 });
                 await signOut(auth2); window.showToast('Akun & Akses Guru berhasil dibuat!');
             }
-            e.target.reset(); 
-            document.getElementById('guru-pass').value = "alhuda2026";
-            document.getElementById('guru-pass').placeholder = "••••••••";
-            document.getElementById('btn-create').innerHTML = "Simpan & Daftarkan Guru";
+            e.target.reset(); document.getElementById('guru-pass').value = "alhuda2026";
             document.querySelectorAll('.cb-mapel, .cb-kelas').forEach(cb => cb.checked = false);
             document.getElementById('guru-is-mapel').checked = true; document.getElementById('guru-is-wali').checked = false;
             document.getElementById('wali-kelas-select-area').classList.add('hidden');
@@ -484,8 +476,7 @@
         inputKode.classList.add('opacity-50', 'cursor-not-allowed');
 
         document.getElementById('guru-nama').value = g.nama;
-        document.getElementById('guru-pass').value = ""; 
-        document.getElementById('guru-pass').placeholder = "— Sandi tidak berubah —";
+        document.getElementById('guru-pass').value = "Sanditidakdiubah"; 
         document.getElementById('guru-pass').readOnly = true;
         
         document.getElementById('guru-is-mapel').checked = g.is_guru_mapel !== false; 
@@ -504,7 +495,6 @@
         document.querySelectorAll('.cb-mapel').forEach(cb => { if(mapels.includes(cb.value)) cb.checked = true; });
         document.querySelectorAll('.cb-kelas').forEach(cb => { if(kls.includes(cb.value)) cb.checked = true; });
         
-        document.getElementById('btn-create').innerHTML = "Simpan Perubahan Guru";
         window.scrollTo(0,0); window.showToast("Mode Edit: Kode & Sandi dikunci", "success");
     }
 
@@ -783,23 +773,9 @@
     }
 
     window.hapusData = async function(folder, id) { 
-        // Guard: jangan izinkan hapus akun superadmin
-        if(folder === 'users') {
-            const target = window.allGurus.find(u => u.id_firestore === id);
-            if(target && target.role === 'superadmin') {
-                return window.showToast('Akun Master TU tidak bisa dihapus!', 'error');
-            }
-        }
-        const pesan = folder === 'users' 
-            ? "Data guru akan dihapus dari database.\nCatatan: Akun login Firebase Auth guru ini tetap aktif dan perlu dihapus manual di Firebase Console jika diperlukan.\n\nLanjutkan?"
-            : "Data yang dihapus tidak bisa dikembalikan. Lanjutkan?";
-        if(confirm(pesan)) { 
-            try {
-                await remove(ref(db, folder + '/' + id)); 
-                window.showToast('Data berhasil dihapus!'); 
-            } catch(e) {
-                window.showToast('Gagal menghapus data!', 'error');
-            }
+        if(confirm("Data yang dihapus tidak bisa dikembalikan. Lanjutkan?")) { 
+            await remove(ref(db, folder + '/' + id)); 
+            window.showToast('Data berhasil dihapus!'); 
         } 
     }
     

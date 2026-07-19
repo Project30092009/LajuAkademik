@@ -534,8 +534,6 @@
     window.allSoals = [];
     window.allJawabans = [];
     window.tahunAjaranAktif = "Belum Disetup";
-    window._usersLoaded = false;   // FIX: flag race condition login guru
-    window._studentsLoaded = false; // FIX: flag race condition login siswa
 
     window.currentStudent = null; window.currentMapel = null; window.currentTaskType = null;
     window.currentStatusFilter = 'all'; window.currentTeacherTab = 'students'; window.editingStudentId = null; 
@@ -572,12 +570,9 @@
             if (time <= 0) {
                 clearInterval(window.examTimerInterval);
                 window.showToast('Waktu Habis! Jawaban dikirim otomatis.', 'error');
-                // Flag ini dipakai submit functions untuk bypass validasi "jawaban kosong"
-                window.isAutoSubmit = true;
                 if(!document.getElementById('area-soal-pg').classList.contains('hidden')) window.submitPGAnswer();
                 else if(!document.getElementById('area-soal-campuran').classList.contains('hidden')) window.submitCampuranAnswer();
                 else window.submitTextAnswer();
-                window.isAutoSubmit = false;
             }
         }, 1000);
     }
@@ -658,14 +653,12 @@
         onValue(ref(db, 'users'), snap => {
             window.allUsers = [];
             if(snap.exists()) { const d = snap.val(); Object.keys(d).forEach(k => window.allUsers.push({id_firestore: k, ...d[k]})); }
-            window._usersLoaded = true; // FIX: tandai data siap
             checkGuruSetup();
         });
         
         onValue(ref(db, 'students'), snap => {
             window.allStudents = [];
             if(snap.exists()) { const d = snap.val(); Object.keys(d).forEach(k => window.allStudents.push({id_firestore: k, ...d[k]})); }
-            window._studentsLoaded = true; // FIX: tandai data siap
             if(window.currentStudent) {
                 const up = window.allStudents.find(s => s.nis === window.currentStudent.nis);
                 if(up) window.currentStudent = up;
@@ -719,30 +712,27 @@
         window.showPage('page-landing');
 
         // DETEKSI OTOMATIS JIKA GURU KEMBALI DARI HALAMAN WALI KELAS
-        // Fix: pakai onValue langsung ke node user, bukan setTimeout yang rapuh
         if(sessionStorage.getItem('is_logged_in_guru') === 'true') {
             onAuthStateChanged(auth, (user) => {
                 if(user) {
-                    onValue(ref(db, 'users/' + user.uid), (snap) => {
-                        if(snap.exists()) {
-                            const userAccount = { id_firestore: user.uid, ...snap.val() };
-                            if(userAccount.role === 'guru') {
-                                window.currentUserRole = userAccount.role; 
-                                window.currentUserName = userAccount.nama; 
-                                window.currentUserDocId = userAccount.id_firestore;
-                                window.guruMapel = window.safeParse(userAccount.guru_mapel); 
-                                window.guruKelas = window.safeParse(userAccount.guru_kelas);
-                                window.isWaliKelas = userAccount.is_wali_kelas || false; 
-                                window.kelasWali = userAccount.kelas_wali || "";
-                                
-                                const btnWali = document.getElementById('btn-tab-wali');
-                                if(btnWali) btnWali.classList.toggle('hidden', !window.isWaliKelas);
-                                
-                                window.showPage('page-teacher-dashboard'); 
-                                window.showTeacherTab('students');
-                            }
+                    setTimeout(() => {
+                        const userAccount = window.allUsers.find(d => d.uid === user.uid);
+                        if(userAccount) {
+                            window.currentUserRole = userAccount.role; 
+                            window.currentUserName = userAccount.nama; 
+                            window.currentUserDocId = userAccount.id_firestore;
+                            window.guruMapel = window.safeParse(userAccount.guru_mapel); 
+                            window.guruKelas = window.safeParse(userAccount.guru_kelas);
+                            window.isWaliKelas = userAccount.is_wali_kelas || false; 
+                            window.kelasWali = userAccount.kelas_wali || "";
+                            
+                            const btnWali = document.getElementById('btn-tab-wali');
+                            if(btnWali && window.isWaliKelas) btnWali.classList.remove('hidden');
+                            
+                            window.showPage('page-teacher-dashboard'); 
+                            window.showTeacherTab('students');
                         }
-                    }, { onlyOnce: true });
+                    }, 1000); // Jeda 1 detik biar Firebase selesai load
                 }
             });
         }
@@ -760,45 +750,21 @@
     window.showToast = function(msg, type='success') { const c = document.getElementById('toast-container'); const t = document.createElement('div'); t.className = `toast px-5 py-3 rounded-xl text-sm font-600 flex items-center gap-2 shadow-xl border ${type==='error'?'bg-red-900 border-red-500':'bg-emerald-900 border-emerald-500'} text-white pointer-events-auto`; t.innerHTML = `<i data-lucide="${type==='error'?'alert-circle':'check-circle'}" class="w-5 h-5"></i> ${msg}`; c.appendChild(t); lucide.createIcons(); setTimeout(() => t.remove(), 4000); }
     window.parseNilai = function(jsonStr) { try { return JSON.parse(jsonStr || '{}'); } catch(e) { return {}; } }
 
-    window.handleStudentLogin = async function(e) { 
+    window.handleStudentLogin = function(e) { 
         e.preventDefault(); 
         const nis = document.getElementById('nis-input').value.trim(); 
-        const pass = document.getElementById('nis-password').value;
-        const btn = e.target.querySelector('button[type="submit"]');
-        if(btn) { btn.disabled = true; btn.textContent = 'Memeriksa...'; }
+        const pass = document.getElementById('nis-password').value; 
+        
+        const student = window.allStudents.find(d => d.nis === nis); 
+        if (!student) return window.showToast('NIS belum terdaftar!', 'error'); 
+        
+        const truePass = student.password || "123456";
+        if (pass !== truePass) return window.showToast('Kata sandi salah!', 'error');
 
-        try {
-            // FIX: tunggu data siswa siap dari Firebase (maks 5 detik)
-            if(!window._studentsLoaded) {
-                if(btn) btn.textContent = 'Memuat data...';
-                await new Promise((resolve, reject) => {
-                    let tries = 0;
-                    const interval = setInterval(() => {
-                        tries++;
-                        if(window._studentsLoaded) { clearInterval(interval); resolve(); }
-                        if(tries > 50) { clearInterval(interval); reject(new Error('timeout')); }
-                    }, 100);
-                });
-            }
-
-            const student = window.allStudents.find(d => d.nis === nis); 
-            if (!student) return window.showToast('NIS belum terdaftar!', 'error'); 
-            
-            const truePass = student.password || "123456";
-            if (pass !== truePass) return window.showToast('Kata sandi salah!', 'error');
-
-            if(!(window.kelasList[student.tingkat] || []).includes(student.jurusan_kelas)) 
-                return window.showToast('Kelas dinonaktifkan.', 'error'); 
-            
-            window.currentStudent = student; 
-            window.showPage('page-student-dashboard'); 
-            window.renderStudentDashboard();
-        } catch(err) {
-            if(err.message === 'timeout') window.showToast('Koneksi lambat, coba lagi!', 'error');
-            else window.showToast('Terjadi kesalahan, coba lagi!', 'error');
-        } finally {
-            if(btn) { btn.disabled = false; btn.textContent = 'Masuk Dashboard'; }
-        }
+        if(!(window.kelasList[student.tingkat] || []).includes(student.jurusan_kelas)) return window.showToast('Kelas dinonaktifkan.', 'error'); 
+        
+        window.currentStudent = student; 
+        window.showPage('page-student-dashboard'); window.renderStudentDashboard(); 
     }
     
     window.logoutStudent = function() { 
@@ -848,15 +814,6 @@
         }
     }
 
-    window.sudahKumpul = function(mapelKey, jenis) {
-        return window.allJawabans.some(j =>
-            j.student_id_firestore === window.currentStudent.id_firestore &&
-            j.jawaban_mapel === mapelKey &&
-            j.jenis_tugas === jenis &&
-            j.tahun_ajaran === window.tahunAjaranAktif
-        );
-    }
-
     window.renderStudentDashboard = function() {
       if(!window.currentStudent) return;
       document.getElementById('student-name-display').textContent = window.currentStudent.nama; document.getElementById('student-info-display').textContent = `${window.currentStudent.nis} | Kelas ${window.currentStudent.tingkat} ${window.currentStudent.jurusan_kelas}`;
@@ -868,8 +825,7 @@
         const kkm = m['kkm_' + window.currentStudent.tingkat] || m.kkm || 75;
         if (avg > 0 && avg < kkm) {
           cRem++; const div = document.createElement('div'); div.className = 'card-glass rounded-2xl p-5 cursor-pointer hover:bg-white/10 hover:border-red-500/50 transition-all group border border-white/5'; div.onclick = () => window.selectTask(m, 'remedial');
-          const sdhRem = window.sudahKumpul(m.key, 'remedial');
-          div.innerHTML = `<div class="flex items-start gap-4"><div class="w-12 h-12 rounded-xl bg-red-500/10 flex justify-center items-center"><i data-lucide="book-open" class="text-red-400"></i></div><div><p class="font-800 text-lg group-hover:text-red-300 transition-colors">${m.name}</p><div class="flex gap-2 flex-wrap mt-1"><span class="text-xs font-600 text-red-400 bg-red-500/10 px-2 py-1 rounded inline-flex items-center gap-1"><i data-lucide="alert-circle" class="w-3 h-3"></i> Remedial (Nilai: ${avg})</span>${sdhRem ? '<span class=\"text-xs font-600 text-emerald-400 bg-emerald-500/10 px-2 py-1 rounded inline-flex items-center gap-1\"><i data-lucide=\"check-circle\" class=\"w-3 h-3\"></i> Sudah Dikumpulkan</span>' : ''}</div></div></div>`; listRemedial.appendChild(div);
+          div.innerHTML = `<div class="flex items-start gap-4"><div class="w-12 h-12 rounded-xl bg-red-500/10 flex justify-center items-center"><i data-lucide="book-open" class="text-red-400"></i></div><div><p class="font-800 text-lg group-hover:text-red-300 transition-colors">${m.name}</p><span class="text-xs font-600 text-red-400 bg-red-500/10 px-2 py-1 rounded inline-flex mt-1 items-center gap-1"><i data-lucide="alert-circle" class="w-3 h-3"></i> Remedial (Nilai: ${avg})</span></div></div>`; listRemedial.appendChild(div);
         }
       });
       if(cRem===0) listRemedial.innerHTML = '<p class="col-span-full p-6 text-center text-emerald-400 font-700 bg-white/5 rounded-2xl border border-white/10">🎉 Nilai Rata-Rata Aman!</p>';
@@ -878,27 +834,15 @@
       const mapelUlanganKeys = [...new Set(soalUlanganList.map(s => s.soal_mapel))];
       mapelUlanganKeys.forEach(mKey => {
         const m = window.mapelList.find(x => x.key === mKey) || {key: mKey, name: mKey}; cUl++; const div = document.createElement('div'); div.className = 'card-glass rounded-2xl p-5 cursor-pointer hover:bg-white/10 hover:border-blue-500/50 transition-all group border border-white/5'; div.onclick = () => window.selectTask(m, 'ulangan');
-        const sdhUl = window.sudahKumpul(m.key, 'ulangan');
-        div.innerHTML = `<div class="flex items-start gap-4"><div class="w-12 h-12 rounded-xl bg-blue-500/10 flex justify-center items-center"><i data-lucide="file-signature" class="text-blue-400"></i></div><div><p class="font-800 text-lg group-hover:text-blue-300 transition-colors">${m.name}</p><div class="flex gap-2 flex-wrap mt-1"><span class="text-xs font-600 text-blue-400 bg-blue-500/10 px-2 py-1 rounded inline-flex items-center gap-1">Tugas Aktif</span>${sdhUl ? '<span class=\"text-xs font-600 text-emerald-400 bg-emerald-500/10 px-2 py-1 rounded inline-flex items-center gap-1\"><i data-lucide=\"check-circle\" class=\"w-3 h-3\"></i> Sudah Dikumpulkan</span>' : ''}</div></div></div>`; listUlangan.appendChild(div);
+        div.innerHTML = `<div class="flex items-start gap-4"><div class="w-12 h-12 rounded-xl bg-blue-500/10 flex justify-center items-center"><i data-lucide="file-signature" class="text-blue-400"></i></div><div><p class="font-800 text-lg group-hover:text-blue-300 transition-colors">${m.name}</p><span class="text-xs font-600 text-blue-400 bg-blue-500/10 px-2 py-1 rounded inline-flex mt-1 items-center gap-1">Tugas Aktif</span></div></div>`; listUlangan.appendChild(div);
       });
       if(cUl===0) listUlangan.innerHTML = '<p class="col-span-full p-6 text-center text-slate-400 font-500 bg-white/5 rounded-2xl border border-white/10">Belum ada tugas/ulangan aktif.</p>';
       lucide.createIcons();
     }
 
-    window.selectTask = function(mapel, jenis) {
-        // Cek duplikat: apakah siswa sudah pernah kirim jawaban untuk soal ini?
-        const sudahSubmit = window.allJawabans.some(j =>
-            j.student_id_firestore === window.currentStudent.id_firestore &&
-            j.jawaban_mapel === mapel.key &&
-            j.jenis_tugas === jenis &&
-            j.tahun_ajaran === window.tahunAjaranAktif
-        );
-        if (sudahSubmit) {
-            if (!confirm('Kamu sudah pernah mengumpulkan jawaban untuk ' + mapel.name + '.\nKumpulkan ulang? (Jawaban lama tetap tersimpan)')) return;
-        }
-
-        window.startAntiCheat();
-
+    window.selectTask = function(mapel, jenis) { 
+        window.startAntiCheat(); 
+        
         document.documentElement.requestFullscreen().catch(e => console.log("Fullscreen ditolak browser"));
         document.addEventListener('fullscreenchange', window.handleFullscreenChange);
 
@@ -1012,14 +956,13 @@
             inputs.forEach((inp, idx) => { if(inp.value.trim()) essayArr.push({ no: idx+1, question: `Nomor ${idx+1}`, text: inp.value.trim() }); });
         }
 
-        // Saat auto-submit (timer habis), bypass validasi jawaban kosong
-        if (!window.isAutoSubmit && (essayArr.length === 0 || essayArr.every(e => !e.text))) return window.showToast('Isi minimal 1 jawaban!', 'error'); 
+        if (essayArr.length === 0 || essayArr.every(e => !e.text)) return window.showToast('Isi minimal 1 jawaban!', 'error'); 
         
-        const btn = document.getElementById('btn-submit-text'); const oldTxt = btn ? btn.innerHTML : ''; if(btn) { btn.disabled = true; btn.innerHTML = "Mengirim..."; } 
+        const btn = document.getElementById('btn-submit-text'); const oldTxt = btn.innerHTML; btn.disabled = true; btn.innerHTML = "Mengirim..."; 
         try { 
             await set(push(ref(db, 'jawabans')), { tahun_ajaran: window.tahunAjaranAktif, jawaban_nis: window.currentStudent.nis, student_id_firestore: window.currentStudent.id_firestore, jawaban_mapel: window.currentMapel.key, jenis_tugas: window.currentTaskType, kategori_remedial: window.currentSoalData?.kategori_remedial || null, format_soal_jawaban: window.currentSoalData.format_soal || 'file', jawaban_essay: JSON.stringify(essayArr), created_at: new Date().toISOString() }); 
             window.backToDashboard(); window.showToast(`Jawaban berhasil dikirim!`); 
-        } catch(e) { window.showToast('Gagal mengirim jawaban!', 'error'); } finally { if(btn) { btn.disabled = false; btn.innerHTML = oldTxt; } } 
+        } catch(e) { window.showToast('Gagal mengirim jawaban!', 'error'); } finally { btn.disabled = false; btn.innerHTML = oldTxt; } 
     }
     
     window.renderPGStudent = function(soal, containerId, radioNamePrefix = 'ans') { 
@@ -1030,9 +973,7 @@
     }
     
     window.submitPGAnswer = async function() { 
-        if(!window.currentSoalData) return;
-        // Konfirmasi sebelum submit (dilewati saat auto-submit timer)
-        if(!window.isAutoSubmit && !confirm('Yakin ingin mengirim semua jawaban? Jawaban tidak bisa diubah setelah dikirim.')) return;
+        if(!window.currentSoalData) return; 
         const qs = window.safeParse(window.currentSoalData.pg_questions); let correctCount = 0; let detailText = `--- HASIL KOREKSI OTOMATIS (PG) ---\n\n`; 
         for(let i=0; i<qs.length; i++) { 
             const selected = document.querySelector(`input[name="ans-${i}"]:checked`); 
@@ -1040,7 +981,7 @@
             if(isCorrect) correctCount++; detailText += `Nomor ${i+1}: Jawab [${ansVal}] -> ${isCorrect ? 'BENAR' : `SALAH (Kunci: ${qs[i].correct})`}\n`; 
         } 
         const finalScore = Math.round((correctCount / qs.length) * 100) || 0; detailText = `NILAI AKHIR: ${finalScore} / 100\n\n` + detailText; 
-        const btn = document.getElementById('btn-submit-pg'); const oldTxt = btn ? btn.innerHTML : ''; if(btn) { btn.disabled = true; btn.innerHTML = "Mengirim..."; } 
+        const btn = document.getElementById('btn-submit-pg'); const oldTxt = btn.innerHTML; btn.disabled = true; btn.innerHTML = "Mengirim..."; 
         try { 
             await set(push(ref(db, 'jawabans')), { tahun_ajaran: window.tahunAjaranAktif, format_soal_jawaban: 'pg', jawaban_nis: window.currentStudent.nis, student_id_firestore: window.currentStudent.id_firestore, jawaban_mapel: window.currentMapel.key, jenis_tugas: window.currentTaskType, kategori_remedial: window.currentSoalData?.kategori_remedial || null, jawaban_text: detailText, created_at: new Date().toISOString() }); 
             
@@ -1055,7 +996,7 @@
             }
 
             window.backToDashboard(); window.showToast(`Selesai! Nilaimu otomatis tersimpan.`, 'success'); 
-        } catch(e) { window.showToast('Gagal mengirim!', 'error'); } finally { if(btn) { btn.disabled = false; btn.innerHTML = oldTxt; } } 
+        } catch(e) { window.showToast('Gagal mengirim!', 'error'); } finally { btn.disabled = false; btn.innerHTML = oldTxt; } 
     }
 
     window.submitCampuranAnswer = async function() {
@@ -1078,71 +1019,29 @@
         let essayArr = [];
         qSpans.forEach((q, idx) => { essayArr.push({ no: idx+1, question: q.innerText, text: aInputs[idx].value.trim() }); });
 
-        if (!window.isAutoSubmit && essayArr.length > 0 && essayArr.every(e => !e.text)) return window.showToast('Isi minimal 1 jawaban esai!', 'error');
+        if (essayArr.length > 0 && essayArr.every(e => !e.text)) return window.showToast('Isi minimal 1 jawaban esai!', 'error');
 
-        const btn = document.getElementById('btn-submit-campuran'); const oldTxt = btn ? btn.innerHTML : ''; if(btn) { btn.disabled = true; btn.innerHTML = "Mengirim..."; }
+        const btn = document.getElementById('btn-submit-campuran'); const oldTxt = btn.innerHTML; btn.disabled = true; btn.innerHTML = "Mengirim...";
 
         try {
             await set(push(ref(db, 'jawabans')), { tahun_ajaran: window.tahunAjaranAktif, jawaban_nis: window.currentStudent.nis, student_id_firestore: window.currentStudent.id_firestore, jawaban_mapel: window.currentMapel.key, jenis_tugas: window.currentTaskType, kategori_remedial: window.currentSoalData?.kategori_remedial || null, format_soal_jawaban: 'pg_esai', jawaban_pg_score: pgScore, jawaban_pg_detail: pgDetailText, jawaban_essay: JSON.stringify(essayArr), created_at: new Date().toISOString() });
             window.backToDashboard(); window.showToast(`Jawaban berhasil dikirim!`);
-        } catch(e) { window.showToast('Gagal mengirim!', 'error'); } finally { if(btn) { btn.disabled = false; btn.innerHTML = oldTxt; } }
+        } catch(e) { window.showToast('Gagal mengirim!', 'error'); } finally { btn.disabled = false; btn.innerHTML = oldTxt; }
     }
 
-    window.handleFileSelect = function(inp) {
-        if (!inp.files.length) return;
-        const file = inp.files[0];
-        const maxSize = 2 * 1024 * 1024; // 2MB
-        const allowedTypes = ['image/jpeg', 'image/png', 'image/webp', 'image/heic', 'image/heif'];
-
-        if (!allowedTypes.includes(file.type) && !file.name.match(/\.(jpg|jpeg|png|webp|heic|heif)$/i)) {
-            window.showToast('Hanya file gambar yang diizinkan (JPG, PNG, WEBP)!', 'error');
-            inp.value = '';
-            return;
-        }
-
-        if (file.size > maxSize) {
-            const sizeMB = (file.size / (1024 * 1024)).toFixed(1);
-            window.showToast('Foto terlalu besar (' + sizeMB + 'MB). Maksimal 2MB!', 'error');
-            inp.value = '';
-            return;
-        }
-
-        window.selectedAnswerFile = file;
-        const sizeKB = file.size < 1024 * 1024
-            ? (file.size / 1024).toFixed(0) + ' KB'
-            : (file.size / (1024 * 1024)).toFixed(1) + ' MB';
-        document.getElementById('file-name-display').innerHTML =
-            '<i data-lucide="check" class="w-4 h-4 inline"></i> File Siap: ' + file.name + ' <span class="text-slate-400">(' + sizeKB + ')</span>';
-        document.getElementById('file-name-display').classList.remove('hidden');
-        lucide.createIcons();
-    }
+    window.handleFileSelect = function(inp) { if (inp.files.length) { window.selectedAnswerFile = inp.files[0]; document.getElementById('file-name-display').innerHTML = `<i data-lucide="check" class="w-4 h-4 inline"></i> File Siap: ${window.selectedAnswerFile.name}`; document.getElementById('file-name-display').classList.remove('hidden'); lucide.createIcons(); } }
     window.submitUploadAnswer = async function() { if (!window.selectedAnswerFile) return window.showToast('Pilih foto!', 'error'); const btn = document.getElementById('btn-submit-upload'); const oldTxt = btn.innerHTML; btn.disabled = true; btn.innerHTML = "Mengupload..."; const r = new FileReader(); r.onload = async (e) => { try { await set(push(ref(db, 'jawabans')), { tahun_ajaran: window.tahunAjaranAktif, format_soal_jawaban: 'file', jawaban_nis: window.currentStudent.nis, student_id_firestore: window.currentStudent.id_firestore, jawaban_mapel: window.currentMapel.key, jenis_tugas: window.currentTaskType, kategori_remedial: window.currentSoalData?.kategori_remedial || null, jawaban_file_name: window.selectedAnswerFile.name, jawaban_file_data: e.target.result, created_at: new Date().toISOString() }); window.selectedAnswerFile = null; document.getElementById('file-name-display').classList.add('hidden'); window.backToDashboard(); window.showToast(`Foto Terkirim!`); } catch(err) { window.showToast('Gagal upload!', 'error'); } finally { btn.disabled = false; btn.innerHTML = oldTxt; } }; r.readAsDataURL(window.selectedAnswerFile); }
 
     // --- ALUR GURU ---
-    window.handlePegawaiLogin = async function(e) { 
+    window.handlePegawaiLogin = function(e) { 
       e.preventDefault(); 
       const kode = document.getElementById('pegawai-kode').value.trim(); 
       const password = document.getElementById('pegawai-password').value;
       const pseudoEmail = `${kode}@alhuda.edu`; 
       
       const btn = document.getElementById('btn-login-pegawai'); const oldTxt = btn.innerHTML; btn.disabled = true; btn.innerHTML = "Memeriksa...";
-
-      try {
-        // FIX: tunggu data users siap dari Firebase (maks 5 detik)
-        if(!window._usersLoaded) {
-            btn.innerHTML = "Memuat data...";
-            await new Promise((resolve, reject) => {
-                let tries = 0;
-                const interval = setInterval(() => {
-                    tries++;
-                    if(window._usersLoaded) { clearInterval(interval); resolve(); }
-                    if(tries > 50) { clearInterval(interval); reject(new Error('timeout')); }
-                }, 100);
-            });
-        }
-
-        const userCredential = await signInWithEmailAndPassword(auth, pseudoEmail, password);
-        {
+      signInWithEmailAndPassword(auth, pseudoEmail, password)
+        .then((userCredential) => {
           const userAccount = window.allUsers.find(d => d.uid === userCredential.user.uid);
           if (userAccount && userAccount.role === 'guru') {
             window.currentUserRole = userAccount.role; window.currentUserName = userAccount.nama; window.currentUserDocId = userAccount.id_firestore;
@@ -1166,14 +1065,9 @@
             
             e.target.reset();
           } else { 
-              await signOut(auth); 
-              window.showToast('Akses ditolak! Kode guru tidak ditemukan.', 'error'); 
+              signOut(auth); window.showToast('Akses ditolak! Anda bukan guru.', 'error'); 
           }
-        }
-      } catch(err) { 
-          if(err.message === 'timeout') window.showToast('Koneksi lambat, coba lagi!', 'error');
-          else window.showToast('Kode / Password salah!', 'error'); 
-      } finally { btn.disabled = false; btn.innerHTML = oldTxt; }
+        }).catch((err) => window.showToast('Kode / Password salah!', 'error')).finally(() => { btn.disabled = false; btn.innerHTML = oldTxt; }); 
     }
 
     window.changeGuruPassword = async function(e) {

@@ -116,8 +116,6 @@
     window.kelasList = {};
     window.kelasWali = "";
     window.tahunAjaranAktif = "Belum Disetup";
-    window._sekolahLoaded = false;
-    window._studentsLoaded = false;
     
     window.safeParse = function(str) { try { return JSON.parse(str || '{}'); } catch(e) { return {}; } };
 
@@ -168,7 +166,6 @@
                 window.tahunAjaranAktif = data.tahun_ajaran || "Belum Disetup";
                 document.getElementById('label-tahun-ajaran').innerText = window.tahunAjaranAktif;
             }
-            window._sekolahLoaded = true;
             refreshView();
         });
 
@@ -178,14 +175,12 @@
                 const data = snap.val();
                 Object.keys(data).forEach(k => window.allStudents.push({id_firestore: k, ...data[k]}));
             }
-            window._studentsLoaded = true;
             refreshView();
         });
     }
 
     function refreshView() {
-        // Tunggu KEDUA listener selesai sebelum render — fix race condition
-        if(window.kelasWali !== "" && window._sekolahLoaded && window._studentsLoaded) {
+        if(window.kelasWali !== "" && window.mapelList.length > 0) {
             document.getElementById('loading-screen').classList.add('hidden');
             document.getElementById('main-content').classList.remove('hidden');
             document.getElementById('main-content').classList.add('flex');
@@ -203,8 +198,9 @@
             return window.allStudents.filter(d => {
                 const sT = (d.tingkat || "").toString().trim().toUpperCase();
                 const sJ = (d.jurusan_kelas || "").toString().trim().toUpperCase();
-                // Exact match — hindari wali kelas PPLG melihat siswa PPLG 2, dst.
-                return sT === wT && sJ === wJ && d.status_mutasi !== 'pending_pindah';
+                const isTingkatMatch = (sT === wT) || sT.includes(wT) || wT.includes(sT);
+                const isJurusanMatch = (sJ === wJ) || sJ.includes(wJ) || wJ.includes(sJ);
+                return isTingkatMatch && isJurusanMatch && d.status_mutasi !== 'pending_pindah';
             });
         } catch(e) { return []; }
     }
