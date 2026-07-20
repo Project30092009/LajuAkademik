@@ -406,22 +406,41 @@
     
     window.handleFirstSetupTU = async function(e) {
         e.preventDefault();
-        const n = document.getElementById('tu-name').value.trim(); const em = document.getElementById('tu-email').value.trim(); const p = document.getElementById('tu-password').value;
-        const btn = document.getElementById('btn-setup-tu'); const oldTxt = btn.innerHTML; btn.disabled = true; btn.innerHTML = "Memproses...";
+        const n = document.getElementById('tu-name').value.trim(); 
+        const em = document.getElementById('tu-email').value.trim(); 
+        const p = document.getElementById('tu-password').value;
+        
+        if(!n || !em || p.length < 6) {
+            window.showToast('Isi semua field! Sandi minimal 6 karakter.', 'error');
+            return;
+        }
+
+        const btn = document.getElementById('btn-setup-tu'); 
+        const oldTxt = btn.innerHTML; 
+        btn.disabled = true; btn.innerHTML = "Memproses...";
+        
         try {
-            // Pakai auth2 (instance terpisah) agar sesi auth utama tidak terganggu
-            const res = await createUserWithEmailAndPassword(auth2, em, p);
-            await set(ref(db, 'users/' + res.user.uid), { uid: res.user.uid, nama: n, email: em, role: 'superadmin', created_at: new Date().toISOString() });
-            await signOut(auth2);
+            // Pakai auth utama — saat setup awal belum ada user yang login
+            const res = await createUserWithEmailAndPassword(auth, em, p);
+            await set(ref(db, 'users/' + res.user.uid), { 
+                uid: res.user.uid, nama: n, email: em, 
+                role: 'superadmin', created_at: new Date().toISOString() 
+            });
+            await signOut(auth);
             window.showToast('Akun Master Selesai! Silakan Login.', 'success');
             e.target.reset(); 
             window.showPage('page-admin-login');
         } catch (err) { 
-            let msg = 'Gagal: Email terpakai / sandi lemah.';
-            if (err.code === 'auth/email-already-in-use') msg = 'Email sudah terdaftar di Firebase Auth. Pakai email lain.';
-            if (err.code === 'auth/weak-password') msg = 'Sandi minimal 6 karakter.';
+            console.error('Setup TU error code:', err.code, '| message:', err.message);
+            let msg = 'Gagal! Kode: ' + (err.code || err.message || 'unknown');
+            if (err.code === 'auth/email-already-in-use') msg = 'Email sudah terdaftar. Hapus dulu dari Firebase Auth.';
+            if (err.code === 'auth/weak-password') msg = 'Sandi terlalu lemah, minimal 6 karakter.';
+            if (err.code === 'auth/invalid-email') msg = 'Format email tidak valid.';
+            if (err.code === 'auth/network-request-failed') msg = 'Koneksi gagal, coba lagi.';
             window.showToast(msg, 'error'); 
-        } finally { btn.disabled = false; btn.innerHTML = oldTxt; }
+        } finally { 
+            btn.disabled = false; btn.innerHTML = oldTxt; 
+        }
     }
 
     window.popWaliJurusan = function() {
