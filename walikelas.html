@@ -164,8 +164,13 @@
                 window.mapelList = data.mapel || [];
                 window.kelasList = data.kelas || {};
                 window.tahunAjaranAktif = data.tahun_ajaran || "Belum Disetup";
-                document.getElementById('label-tahun-ajaran').innerText = window.tahunAjaranAktif;
+            } else {
+                // Node belum ada — pastikan state bersih dan halaman tetap muncul
+                window.mapelList = [];
+                window.kelasList = {};
+                window.tahunAjaranAktif = "Belum Disetup";
             }
+            document.getElementById('label-tahun-ajaran').innerText = window.tahunAjaranAktif;
             refreshView();
         });
 
@@ -180,7 +185,9 @@
     }
 
     function refreshView() {
-        if(window.kelasWali !== "" && window.mapelList.length > 0) {
+        // Tampilkan halaman begitu kelasWali sudah diketahui, 
+        // tidak perlu nunggu mapelList — supaya tidak stuck loading kalau mapel belum disetup
+        if(window.kelasWali !== "") {
             document.getElementById('loading-screen').classList.add('hidden');
             document.getElementById('main-content').classList.remove('hidden');
             document.getElementById('main-content').classList.add('flex');
@@ -217,6 +224,15 @@
             let anakWali = getAnakWali();
             const thead = document.getElementById('leger-table-head'); 
             const tbody = document.getElementById('leger-table-body');
+
+            // Kalau mapel belum disetup oleh TU, tampilkan pesan informatif
+            if(window.mapelList.length === 0) {
+                thead.innerHTML = `<tr><th class="p-4 text-center text-slate-400">Nama Siswa</th><th class="p-4 text-center text-slate-400">NIS</th><th class="p-4 text-center text-amber-400">Status</th></tr>`;
+                tbody.innerHTML = anakWali.length > 0
+                    ? anakWali.map(s => `<tr class="border-b border-white/5"><td class="p-4 font-800 text-white">${s.nama}</td><td class="p-4 font-mono text-slate-400">${s.nis}</td><td class="p-4 text-center text-amber-400 text-xs font-600">Mapel belum disetup TU</td></tr>`).join('')
+                    : `<tr><td colspan="3" class="p-8 text-center text-slate-500 font-600">Belum ada siswa di kelas ini.</td></tr>`;
+                return;
+            }
 
             let headHtml = `<tr><th class="p-4 text-center">Rank</th><th class="p-4">Nama Siswa</th><th class="p-4">NIS</th>`;
             window.mapelList.forEach(m => { headHtml += `<th class="p-4 text-center border-l border-white/5 text-indigo-300">${m.name}</th>`; });

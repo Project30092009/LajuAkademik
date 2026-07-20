@@ -715,7 +715,9 @@
         if(sessionStorage.getItem('is_logged_in_guru') === 'true') {
             onAuthStateChanged(auth, (user) => {
                 if(user) {
-                    setTimeout(() => {
+                    // Retry loop: cek allUsers sampai terisi (max 5 detik), bukan setTimeout statis
+                    let retryCount = 0;
+                    const tryRestoreSession = () => {
                         const userAccount = window.allUsers.find(d => d.uid === user.uid);
                         if(userAccount) {
                             window.currentUserRole = userAccount.role; 
@@ -731,8 +733,19 @@
                             
                             window.showPage('page-teacher-dashboard'); 
                             window.showTeacherTab('students');
+                        } else if(retryCount < 10) {
+                            // Belum ada data, coba lagi 500ms kemudian (max 10x = 5 detik)
+                            retryCount++;
+                            setTimeout(tryRestoreSession, 500);
+                        } else {
+                            // Sudah timeout, bersihkan session dan minta login ulang
+                            sessionStorage.clear();
+                            window.showToast('Sesi habis, silakan login ulang.', 'error');
                         }
-                    }, 1000); // Jeda 1 detik biar Firebase selesai load
+                    };
+                    setTimeout(tryRestoreSession, 300);
+                } else {
+                    sessionStorage.clear();
                 }
             });
         }
@@ -778,7 +791,10 @@
         document.getElementById('dashboard-lists-area').classList.remove('hidden'); 
         document.getElementById('student-pengerjaan-area').classList.add('hidden');
         ['dynamic-essay-container', 'pg-student-list', 'campuran-pg-list', 'campuran-esai-list'].forEach(id => { const el = document.getElementById(id); if(el) el.innerHTML = ''; });
-        document.getElementById('nis-input').value = ''; 
+        document.getElementById('nis-input').value = '';
+        // Pastikan session guru tidak ikut aktif setelah siswa logout
+        sessionStorage.removeItem('is_logged_in_guru');
+        sessionStorage.removeItem('guru_uid');
         window.showPage('page-landing'); 
     }
 

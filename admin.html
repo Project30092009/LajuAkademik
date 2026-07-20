@@ -291,7 +291,7 @@
 
   <script type="module">
     import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
-    import { getDatabase, ref, set, push, onValue, remove, update } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-database.js";
+    import { getDatabase, ref, set, push, onValue, remove, update, get } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-database.js";
     import { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
     
    const fbKeySatu = "AIzaSyDTEIcErwM8r";
@@ -390,16 +390,36 @@
         });
     });
 
-    window.handleAdminLogin = function(e) {
+    window.handleAdminLogin = async function(e) {
         e.preventDefault();
-        const em = document.getElementById('admin-email').value.trim(); const pass = document.getElementById('admin-pass').value;
-        const btn = document.getElementById('btn-login'); btn.disabled = true; btn.innerHTML = "Memeriksa...";
-        signInWithEmailAndPassword(auth, em, pass).then((cred) => {
-            const acc = window.allGurus.find(u => u.email === cred.user.email && u.role === 'superadmin');
-            if(acc) {
-                window.showPage('page-admin-dashboard'); document.getElementById('admin-name-display').innerText = acc.nama; e.target.reset(); window.showTab('tab-guru');
-            } else { signOut(auth); window.showToast('Bukan akun TU!', 'error'); }
-        }).catch(err => window.showToast('Akses ditolak!', 'error')).finally(() => { btn.disabled = false; btn.innerHTML = "Masuk Sistem"; });
+        const em = document.getElementById('admin-email').value.trim(); 
+        const pass = document.getElementById('admin-pass').value;
+        const btn = document.getElementById('btn-login'); 
+        btn.disabled = true; btn.innerHTML = "Memeriksa...";
+        try {
+            const cred = await signInWithEmailAndPassword(auth, em, pass);
+            // Baca langsung dari RTDB by UID — tidak bergantung allGurus yang mungkin belum ter-load
+            const snap = await get(ref(db, 'users/' + cred.user.uid));
+            if(snap.exists()) {
+                const userData = snap.val();
+                if(userData.role === 'superadmin') {
+                    window.showPage('page-admin-dashboard'); 
+                    document.getElementById('admin-name-display').innerText = userData.nama; 
+                    e.target.reset(); 
+                    window.showTab('tab-guru');
+                } else { 
+                    await signOut(auth); 
+                    window.showToast('Bukan akun TU!', 'error'); 
+                }
+            } else { 
+                await signOut(auth); 
+                window.showToast('Data akun tidak ditemukan!', 'error'); 
+            }
+        } catch(err) { 
+            window.showToast('Email / sandi salah!', 'error'); 
+        } finally { 
+            btn.disabled = false; btn.innerHTML = "Masuk Sistem"; 
+        }
     }
 
     window.logoutAdmin = function() { signOut(auth).then(() => { window.showPage('page-admin-login'); }); }
