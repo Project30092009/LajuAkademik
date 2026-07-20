@@ -333,24 +333,34 @@
         c.appendChild(t); lucide.createIcons(); setTimeout(() => t.remove(), 4000); 
     }
 
-    window.showPage = function(id) { document.querySelectorAll('#page-admin-login, #page-setup-tu, #page-admin-dashboard').forEach(el => el.classList.add('hidden')); document.getElementById(id).classList.remove('hidden'); lucide.createIcons(); }
+    window.updateSetupButton = function() {
+        const btnSetup = document.getElementById('btn-setup-awal');
+        if (!btnSetup) return;
+        const hasSuperadmin = window.allGurus.some(u => u.role === 'superadmin');
+        if (!hasSuperadmin) {
+            btnSetup.classList.remove('hidden');
+        } else {
+            btnSetup.classList.add('hidden');
+        }
+    }
+
+    window.showPage = function(id) { document.querySelectorAll('#page-admin-login, #page-setup-tu, #page-admin-dashboard').forEach(el => el.classList.add('hidden')); document.getElementById(id).classList.remove('hidden'); if(id === 'page-admin-login') window.updateSetupButton(); lucide.createIcons(); }
     window.showTab = function(id) { document.querySelectorAll('#tab-guru, #tab-siswa, #tab-master').forEach(el => el.classList.add('hidden')); document.getElementById(id).classList.remove('hidden'); }
 
     document.addEventListener('DOMContentLoaded', () => { 
         lucide.createIcons();
+        // Force cek tombol setelah 2 detik kalau listener belum terpanggil
+        setTimeout(() => { window.updateSetupButton(); }, 2000);
         
         onValue(ref(db, 'users'), (snapshot) => {
             window.allGurus = [];
-            let hasSuperadmin = false;
             if (snapshot.exists()) {
                 const data = snapshot.val();
                 Object.keys(data).forEach(k => { 
                     window.allGurus.push({ id_firestore: k, ...data[k] });
-                    if(data[k].role === 'superadmin') hasSuperadmin = true;
                 });
             }
-            const btnSetup = document.getElementById('btn-setup-awal');
-            if(btnSetup) { if(!hasSuperadmin) btnSetup.classList.remove('hidden'); else btnSetup.classList.add('hidden'); }
+            window.updateSetupButton();
             window.renderGuru();
         });
 
@@ -399,11 +409,19 @@
         const n = document.getElementById('tu-name').value.trim(); const em = document.getElementById('tu-email').value.trim(); const p = document.getElementById('tu-password').value;
         const btn = document.getElementById('btn-setup-tu'); const oldTxt = btn.innerHTML; btn.disabled = true; btn.innerHTML = "Memproses...";
         try {
-            const res = await createUserWithEmailAndPassword(auth, em, p);
+            // Pakai auth2 (instance terpisah) agar sesi auth utama tidak terganggu
+            const res = await createUserWithEmailAndPassword(auth2, em, p);
             await set(ref(db, 'users/' + res.user.uid), { uid: res.user.uid, nama: n, email: em, role: 'superadmin', created_at: new Date().toISOString() });
+            await signOut(auth2);
             window.showToast('Akun Master Selesai! Silakan Login.', 'success');
-            await signOut(auth); e.target.reset(); window.showPage('page-admin-login');
-        } catch (err) { window.showToast('Gagal: Email terpakai / sandi lemah.', 'error'); } finally { btn.disabled = false; btn.innerHTML = oldTxt; }
+            e.target.reset(); 
+            window.showPage('page-admin-login');
+        } catch (err) { 
+            let msg = 'Gagal: Email terpakai / sandi lemah.';
+            if (err.code === 'auth/email-already-in-use') msg = 'Email sudah terdaftar di Firebase Auth. Pakai email lain.';
+            if (err.code === 'auth/weak-password') msg = 'Sandi minimal 6 karakter.';
+            window.showToast(msg, 'error'); 
+        } finally { btn.disabled = false; btn.innerHTML = oldTxt; }
     }
 
     window.popWaliJurusan = function() {
@@ -775,7 +793,15 @@
     window.hapusData = async function(folder, id) { 
         if(confirm("Data yang dihapus tidak bisa dikembalikan. Lanjutkan?")) { 
             await remove(ref(db, folder + '/' + id)); 
-            window.showToast('Data berhasil dihapus!'); 
+            window.showToast('Data berhasil dihapus!');
+            // Kalau yang dihapus adalah superadmin, langsung force signout dan balik ke login
+            if (folder === 'users') {
+                const deleted = window.allGurus.find(u => u.id_firestore === id);
+                if (deleted && deleted.role === 'superadmin') {
+                    await signOut(auth);
+                    window.showPage('page-admin-login');
+                }
+            }
         } 
     }
     
